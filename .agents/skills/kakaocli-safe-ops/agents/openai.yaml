@@ -1,0 +1,5 @@
+interface:
+  display_name: "KakaoTalk on this Mac"
+  short_description: "Install, verify, and safely use kakaocli for KakaoTalk tasks on this Mac."
+policy:
+  allow_implicit_invocation: true
