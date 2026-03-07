@@ -59,6 +59,8 @@ class ExternalEmbeddingClient:
         if hasattr(payload, "tolist"):
             payload = payload.tolist()
         payload = self._unwrap_payload(payload)
+        if isinstance(payload, list) and len(payload) == 1 and self._is_vector(payload[0]):
+            payload = payload[0]
         if self._is_vector(payload):
             return self._vector_to_floats(payload)
         raise RuntimeError(
