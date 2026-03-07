@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "skills": {
+    "embedding-strategies": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "computedHash": "e68fb8437a47041b797b1445a722e85a7a74b4c508954fac323b29e445eccbec"
+    },
+    "hybrid-search-implementation": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "computedHash": "0015d0f51e0f6e8ccab2865dea8837dd9f67281bdbc5511330bd5149818bd4aa"
+    },
+    "llm-evaluation": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "computedHash": "bfc96be76749f7ea01b52ce269521b7bd1b782343564c9834961366cd0c692db"
+    },
+    "rag-implementation": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "computedHash": "593f3b12b946a67978bccd5c2ddd599b060aec60d35f83fbda5764dfd982f099"
+    }
+  }
+}
