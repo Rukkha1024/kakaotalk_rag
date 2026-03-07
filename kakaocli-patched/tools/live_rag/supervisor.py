@@ -26,11 +26,12 @@ RUN_SYNC_PATH = REPO_ROOT / "tools" / "live_rag" / "run_sync.py"
 
 
 class LiveRAGSupervisor:
-    def __init__(self, *, base_url: str, db_path: Path, binary: Path, interval: float) -> None:
+    def __init__(self, *, base_url: str, db_path: Path, binary: Path, interval: float, service_mode: str) -> None:
         self.base_url = base_url
         self.db_path = db_path
         self.binary = binary
         self.interval = interval
+        self.service_mode = service_mode
         self.host, self.port = parse_host_port(base_url)
         self.processes: list[subprocess.Popen[str]] = []
         self.stopping = False
@@ -41,17 +42,20 @@ class LiveRAGSupervisor:
         self.processes.append(app_process)
         self._wait_for_app_health(app_process)
 
-        sync_process = self._spawn_sync()
-        self.processes.append(sync_process)
+        sync_process: subprocess.Popen[str] | None = None
+        if self.service_mode == "follow":
+            sync_process = self._spawn_sync()
+            self.processes.append(sync_process)
 
         while not self.stopping:
             app_exit = app_process.poll()
             if app_exit is not None:
-                self._terminate_process(sync_process, "sync")
+                if sync_process is not None:
+                    self._terminate_process(sync_process, "sync")
                 return app_exit or 1
 
-            sync_exit = sync_process.poll()
-            if sync_exit is not None:
+            sync_exit = sync_process.poll() if sync_process is not None else None
+            if sync_process is not None and sync_exit is not None:
                 if self.stopping:
                     break
                 time.sleep(3.0)
@@ -145,6 +149,7 @@ def main() -> None:
     parser.add_argument("--db-path", default=str(DEFAULT_DB_PATH))
     parser.add_argument("--binary", default=str(DEFAULT_BINARY))
     parser.add_argument("--interval", type=float, default=2.0)
+    parser.add_argument("--service-mode", choices=("follow", "server-only", "off"), default="follow")
     args = parser.parse_args()
 
     supervisor = LiveRAGSupervisor(
@@ -152,6 +157,7 @@ def main() -> None:
         db_path=Path(args.db_path),
         binary=Path(args.binary),
         interval=args.interval,
+        service_mode=args.service_mode,
     )
     raise SystemExit(supervisor.run())
 

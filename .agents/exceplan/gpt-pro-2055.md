@@ -291,3 +291,43 @@ This refactor is done when all of the following are true:
 The next clean step is to turn this into a **file-by-file implementation checklist** with exact edits per module.
 
 [1]: https://lobehub.com/skills/kevinslin-llm-dev.exec-plan?utm_source=chatgpt.com "dev.exec-plan | Skills Marketplace"
+
+## 8. Progress
+
+- [x] (2026-03-07 12:24Z) Created issue tracking in `docs/issue/issue001.md` and `docs/dev/issue/issue001.ko.md`.
+- [x] (2026-03-07 12:24Z) Added deterministic benchmark fixtures, snapshot generation, and smoke validation under `kakaocli-patched/tools/live_rag/validate_semantic.py`, `kakaocli-patched/tools/live_rag/eval_support.py`, and `kakaocli-patched/tools/live_rag/eval/`.
+- [x] (2026-03-07 12:24Z) Replaced the hit serialization contract so retrieval results include `actual_mode`, `requested_mode`, matched chunk provenance, source attribution, and per-stage scores.
+- [x] (2026-03-07 12:24Z) Refactored embeddings into model-aware query/document paths and added provider-aware batch attempts with serial fallback.
+- [x] (2026-03-07 12:24Z) Added line-aware and sentence-aware long-message chunking and explicit semantic policy loading from `configs/live_rag_semantic_policy.yaml`.
+- [x] (2026-03-07 12:24Z) Added explicit service mode wiring across query/service/supervisor paths.
+- [x] (2026-03-07 12:24Z) Added regression tests and locked the deterministic reference snapshot MD5.
+
+## 9. Surprises & Discoveries
+
+- Observation: `huggingface_hub.InferenceClient.feature_extraction` exposes a public single-string API even though the provider helper can prepare requests with `inputs: Any`.
+  Evidence: local signature inspection showed `feature_extraction(self, text: str, ..., prompt_name: Optional[str] = None, ...)`.
+- Observation: semantic chunk IDs change when the semantic policy signature changes because the policy feeds the semantic config signature.
+  Evidence: the first regression snapshot mismatch disappeared once the fixture policy signature matched the validation policy signature.
+- Observation: `unittest discover` did not recurse into the new `tests/live_rag/` tree until `__init__.py` files were added.
+  Evidence: initial discovery ran `0 tests`; after adding package markers it ran `4 tests`.
+
+## 10. Decision Log
+
+- Decision: Keep the human-readable text rendering close to the prior CLI output while expanding the JSON response contract.
+  Rationale: the user required baseline-visible behavior to stay stable while still adopting the stronger machine-readable evidence layer.
+  Date/Author: 2026-03-07 / Codex
+- Decision: Use a deterministic local embedding client for benchmark and regression validation.
+  Rationale: this keeps smoke, benchmark, snapshot, and MD5 comparison reproducible without depending on external inference availability.
+  Date/Author: 2026-03-07 / Codex
+- Decision: Treat legacy defaults as replaced, but keep limited non-default safety controls such as rerank mode and service mode for validation and recovery.
+  Rationale: the approved direction was hard replacement of the production default path, not removal of every operational control.
+  Date/Author: 2026-03-07 / Codex
+- Decision: Record the real implementation root as `kakaocli-patched/tools/live_rag/` even though the original plan text used `tools/live_rag/`.
+  Rationale: the checked-in code lives under the patched subrepo and the implementation had to follow the real paths to stay executable.
+  Date/Author: 2026-03-07 / Codex
+
+## 11. Outcomes & Retrospective
+
+The plan is implemented in the working tree. The retrieval layer now returns richer evidence objects, deterministic validation produces benchmark metrics and a locked snapshot MD5, semantic policy moved into YAML, embedding/query handling is model-aware, and long-message chunking no longer relies only on a fixed window. The main remaining risk is environment-specific live launchd behavior, which cannot be fully proven from fixture validation alone.
+
+Revision note: appended implementation progress, discoveries, decisions, and outcomes so this ExecPlan remains a usable living document during and after execution.

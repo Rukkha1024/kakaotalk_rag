@@ -35,10 +35,10 @@ def post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
 def render_text(payload: dict[str, Any]) -> str:
     lines = [
         f"query: {payload['query']}",
-        f"mode: {payload.get('mode', 'lexical')}",
+        f"mode: {payload.get('actual_mode', payload.get('mode', 'lexical'))}",
         f"hits: {len(payload['hits'])}",
     ]
-    if payload.get("requested_mode") and payload.get("requested_mode") != payload.get("mode"):
+    if payload.get("requested_mode") and payload.get("requested_mode") != payload.get("actual_mode", payload.get("mode")):
         lines.insert(2, f"requested_mode: {payload['requested_mode']}")
         lines.insert(3, f"fallback_reason: {payload.get('fallback_reason', 'semantic_unavailable')}")
     for index, hit in enumerate(payload["hits"], start=1):
@@ -69,6 +69,9 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=8)
     parser.add_argument("--mode", choices=("lexical", "semantic", "hybrid"), default="hybrid")
     parser.add_argument("--semantic-top-k", type=int, default=24)
+    parser.add_argument("--rerank", choices=("off", "on", "auto"), default="auto")
+    parser.add_argument("--rerank-top-n", type=int, default=12)
+    parser.add_argument("--service-mode", choices=("follow", "server-only", "off"), default="follow")
     parser.add_argument("--chat-id", type=int)
     parser.add_argument("--speaker")
     parser.add_argument("--since-days", type=float)
@@ -82,12 +85,14 @@ def main() -> None:
     if not query:
         raise SystemExit("A query string is required.")
 
-    ensure_running(
-        base_url=args.base_url,
-        db_path=Path(args.db_path),
-        binary=Path(args.binary),
-        timeout=args.timeout,
-    )
+    if args.service_mode != "off":
+        ensure_running(
+            base_url=args.base_url,
+            db_path=Path(args.db_path),
+            binary=Path(args.binary),
+            timeout=args.timeout,
+            service_mode=args.service_mode,
+        )
 
     payload = post_json(
         f"{args.base_url.rstrip('/')}/retrieve",
@@ -96,6 +101,8 @@ def main() -> None:
             "mode": args.mode,
             "limit": args.limit,
             "semantic_top_k": args.semantic_top_k,
+            "rerank": args.rerank,
+            "rerank_top_n": args.rerank_top_n,
             "chat_id": args.chat_id,
             "speaker": args.speaker,
             "since_days": args.since_days,
@@ -103,6 +110,7 @@ def main() -> None:
             "context_after": args.context_after,
         },
     )
+    payload["service_mode"] = args.service_mode
 
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, sort_keys=True))

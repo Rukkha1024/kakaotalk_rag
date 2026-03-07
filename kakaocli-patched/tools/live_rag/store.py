@@ -14,6 +14,13 @@ from typing import Any
 
 import numpy as np
 
+try:
+    from .policy import SemanticPolicy
+    from .semantic_index import reciprocal_rank_fuse
+except ImportError:
+    from policy import SemanticPolicy
+    from semantic_index import reciprocal_rank_fuse
+
 
 SCHEMA = """
 PRAGMA journal_mode = WAL;
@@ -108,6 +115,11 @@ SEMANTIC_STATE_KEYS = (
     "semantic_chunk_overlap",
     "semantic_max_member_count",
     "semantic_last_indexed_log_id",
+    "semantic_policy_signature",
+    "semantic_policy_path",
+    "semantic_query_profile_version",
+    "semantic_message_fetch_batch_size",
+    "semantic_embedding_request_batch_size",
 )
 
 
@@ -280,6 +292,17 @@ class LiveRAGStore:
             stats["semantic_embedding_provider"] = self._get_state(connection, "semantic_embedding_provider")
             stats["semantic_max_member_count"] = self._get_int_state(connection, "semantic_max_member_count")
             stats["semantic_last_indexed_log_id"] = self._get_int_state(connection, "semantic_last_indexed_log_id")
+            stats["semantic_policy_signature"] = self._get_state(connection, "semantic_policy_signature")
+            stats["semantic_policy_path"] = self._get_state(connection, "semantic_policy_path")
+            stats["semantic_query_profile_version"] = self._get_state(connection, "semantic_query_profile_version")
+            stats["semantic_message_fetch_batch_size"] = self._get_int_state(
+                connection,
+                "semantic_message_fetch_batch_size",
+            )
+            stats["semantic_embedding_request_batch_size"] = self._get_int_state(
+                connection,
+                "semantic_embedding_request_batch_size",
+            )
             metadata_stats = connection.execute(
                 """
                 SELECT
@@ -327,18 +350,29 @@ class LiveRAGStore:
             connection.commit()
         return {"chat_count": len(normalized)}
 
-    def excluded_chat_ids_for_embedding(self, *, max_member_count: int) -> list[int]:
+    def excluded_chat_ids_for_embedding(
+        self,
+        *,
+        policy: SemanticPolicy | None = None,
+        max_member_count: int | None = None,
+    ) -> list[int]:
+        effective_policy = self._coerce_policy(policy=policy, max_member_count=max_member_count)
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT chat_id
+                SELECT chat_id, member_count
                 FROM chat_metadata
-                WHERE member_count > ?
                 ORDER BY chat_id ASC
-                """,
-                (max_member_count,),
+                """
             ).fetchall()
-        return [int(row["chat_id"]) for row in rows]
+        return [
+            int(row["chat_id"])
+            for row in rows
+            if not effective_policy.is_chat_eligible(
+                chat_id=int(row["chat_id"]),
+                member_count=int(row["member_count"]),
+            )
+        ]
 
     def count_embedding_messages_missing_chat_metadata(
         self,
@@ -441,36 +475,53 @@ class LiveRAGStore:
         after_log_id: int | None,
         limit: int | None,
         *,
-        max_member_count: int,
+        policy: SemanticPolicy | None = None,
+        max_member_count: int | None = None,
     ) -> list[dict[str, Any]]:
+        effective_policy = self._coerce_policy(policy=policy, max_member_count=max_member_count)
         clauses = [
             "m.message_type = 1",
             "COALESCE(TRIM(m.text), '') != ''",
-            "c.member_count <= ?",
         ]
-        params: list[Any] = [max_member_count]
-        if after_log_id is not None:
-            clauses.append("m.log_id > ?")
-            params.append(after_log_id)
-        limit_sql = ""
-        if limit is not None:
-            limit_sql = "LIMIT ?"
-            params.append(limit)
+        params: list[Any] = []
+        cursor = after_log_id
+        collected: list[dict[str, Any]] = []
+        scan_limit = max(256, (limit or 256) * 4)
 
         with self._connect() as connection:
-            rows = connection.execute(
-                f"""
-                SELECT m.*
-                FROM messages AS m
-                INNER JOIN chat_metadata AS c
-                    ON c.chat_id = m.chat_id
-                WHERE {' AND '.join(clauses)}
-                ORDER BY m.log_id ASC
-                {limit_sql}
-                """,
-                params,
-            ).fetchall()
-            return [self._serialize_row(row) for row in rows]
+            while True:
+                scan_clauses = list(clauses)
+                scan_params = list(params)
+                if cursor is not None:
+                    scan_clauses.append("m.log_id > ?")
+                    scan_params.append(cursor)
+                scan_params.append(scan_limit)
+                rows = connection.execute(
+                    f"""
+                    SELECT m.*, c.member_count
+                    FROM messages AS m
+                    INNER JOIN chat_metadata AS c
+                        ON c.chat_id = m.chat_id
+                    WHERE {' AND '.join(scan_clauses)}
+                    ORDER BY m.log_id ASC
+                    LIMIT ?
+                    """,
+                    scan_params,
+                ).fetchall()
+                if not rows:
+                    break
+                for row in rows:
+                    if effective_policy.is_chat_eligible(
+                        chat_id=int(row["chat_id"]),
+                        member_count=int(row["member_count"]),
+                    ):
+                        collected.append(self._serialize_row(row))
+                        if limit is not None and len(collected) >= limit:
+                            return collected
+                cursor = int(rows[-1]["log_id"])
+                if len(rows) < scan_limit:
+                    break
+        return collected
 
     def clear_semantic_index(self) -> None:
         with self._connect() as connection:
@@ -550,6 +601,14 @@ class LiveRAGStore:
                 "chunk_overlap": self._get_int_state(connection, "semantic_chunk_overlap"),
                 "max_member_count": self._get_int_state(connection, "semantic_max_member_count"),
                 "last_indexed_log_id": self._get_int_state(connection, "semantic_last_indexed_log_id"),
+                "policy_signature": self._get_state(connection, "semantic_policy_signature"),
+                "policy_path": self._get_state(connection, "semantic_policy_path"),
+                "query_profile_version": self._get_state(connection, "semantic_query_profile_version"),
+                "message_fetch_batch_size": self._get_int_state(connection, "semantic_message_fetch_batch_size"),
+                "embedding_request_batch_size": self._get_int_state(
+                    connection,
+                    "semantic_embedding_request_batch_size",
+                ),
             }
 
     def retrieve(
@@ -642,10 +701,55 @@ class LiveRAGStore:
                     score=float(match["score"]),
                     context_before=context_before,
                     context_after=context_after,
+                    hit_fields={
+                        "semantic_score": float(match["score"]),
+                        "retrieval_sources": ["semantic"],
+                        "matched_chunk_text": match.get("chunk_text"),
+                        "matched_chunk_id": match.get("chunk_id"),
+                        "semantic_config_signature": match.get("config_signature"),
+                        "embedding_model": match.get("embedding_model"),
+                        "embedding_provider": match.get("embedding_provider"),
+                    },
                 )
                 for match in matches[:limit]
             ]
         return [self._serialize_hit(hit) for hit in hits]
+
+    def retrieve_hybrid(
+        self,
+        *,
+        query: str,
+        semantic_query_vector: list[float],
+        limit: int = 8,
+        semantic_top_k: int = 24,
+        chat_id: int | None = None,
+        speaker: str | None = None,
+        since_days: float | None = None,
+        context_before: int = 2,
+        context_after: int = 2,
+        config_signature: str | None = None,
+    ) -> list[dict[str, Any]]:
+        lexical_hits = self.retrieve_lexical(
+            query=query,
+            limit=limit,
+            chat_id=chat_id,
+            speaker=speaker,
+            since_days=since_days,
+            context_before=context_before,
+            context_after=context_after,
+        )
+        semantic_hits = self.retrieve_semantic(
+            query_vector=semantic_query_vector,
+            limit=limit,
+            semantic_top_k=semantic_top_k,
+            chat_id=chat_id,
+            speaker=speaker,
+            since_days=since_days,
+            context_before=context_before,
+            context_after=context_after,
+            config_signature=config_signature,
+        )
+        return reciprocal_rank_fuse(lexical_hits, semantic_hits, limit=limit)
 
     def semantic_search(
         self,
@@ -706,6 +810,10 @@ class LiveRAGStore:
                     "timestamp": row["timestamp"],
                     "score": score,
                     "chunk_text": row["chunk_text"],
+                    "chunk_id": row["chunk_id"],
+                    "config_signature": row["config_signature"],
+                    "embedding_model": row["embedding_model"],
+                    "embedding_provider": row["embedding_provider"],
                 }
 
         ranked = sorted(
@@ -830,6 +938,10 @@ class LiveRAGStore:
             context_before=context_before,
             context_after=context_after,
             row=row,
+            hit_fields={
+                "lexical_score": float(row["score"]),
+                "retrieval_sources": ["lexical"],
+            },
         )
 
     def _expand_message_hit(
@@ -841,6 +953,7 @@ class LiveRAGStore:
         context_before: int,
         context_after: int,
         row: sqlite3.Row | None = None,
+        hit_fields: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         message_row = row
         if message_row is None:
@@ -874,16 +987,29 @@ class LiveRAGStore:
             (chat_id, current_log_id, context_after),
         ).fetchall()
 
-        return {
+        payload = {
             "score": score,
             "message": message_row,
             "context_before": list(reversed(before_rows)),
             "context_after": list(after_rows),
         }
+        if hit_fields:
+            payload.update(hit_fields)
+        return payload
 
     def _serialize_hit(self, hit: dict[str, Any]) -> dict[str, Any]:
         return {
             "score": float(hit["score"]),
+            "lexical_score": self._optional_float(hit.get("lexical_score")),
+            "semantic_score": self._optional_float(hit.get("semantic_score")),
+            "fusion_score": self._optional_float(hit.get("fusion_score")),
+            "retrieval_sources": list(hit.get("retrieval_sources", [])),
+            "matched_chunk_text": hit.get("matched_chunk_text"),
+            "matched_chunk_id": hit.get("matched_chunk_id"),
+            "semantic_config_signature": hit.get("semantic_config_signature"),
+            "embedding_model": hit.get("embedding_model"),
+            "embedding_provider": hit.get("embedding_provider"),
+            "rerank_score": self._optional_float(hit.get("rerank_score")),
             "message": self._serialize_row(hit["message"]),
             "context_before": [self._serialize_row(row) for row in hit["context_before"]],
             "context_after": [self._serialize_row(row) for row in hit["context_after"]],
@@ -989,6 +1115,30 @@ class LiveRAGStore:
         if value is None or value == "":
             return None
         return value
+
+    @staticmethod
+    def _optional_float(value: Any) -> float | None:
+        if value is None:
+            return None
+        return float(value)
+
+    @staticmethod
+    def _coerce_policy(
+        *,
+        policy: SemanticPolicy | None,
+        max_member_count: int | None,
+    ) -> SemanticPolicy:
+        if policy is not None:
+            return policy
+        effective_max = 30 if max_member_count is None else int(max_member_count)
+        return SemanticPolicy(
+            default_max_member_count=effective_max,
+            allow_chat_ids=(),
+            deny_chat_ids=(),
+            chat_overrides={},
+            signature=f"legacy-max-member-count-{effective_max}",
+            source_path=Path("<legacy-inline>"),
+        )
 
     @staticmethod
     def _utc_now() -> datetime:

@@ -11,11 +11,13 @@ from typing import Any
 
 try:
     from .embedding_client import ExternalEmbeddingClient
+    from .policy import DEFAULT_POLICY_PATH, SemanticPolicy, load_semantic_policy
     from .semantic_index import (
         DEFAULT_CHUNK_CHARS,
         DEFAULT_CHUNK_OVERLAP,
-        DEFAULT_EMBED_BATCH_SIZE,
+        DEFAULT_EMBEDDING_REQUEST_BATCH_SIZE,
         DEFAULT_EMBEDDING_MODEL,
+        DEFAULT_MESSAGE_FETCH_BATCH_SIZE,
         DEFAULT_MAX_MEMBER_COUNT,
         batched,
         build_config_signature,
@@ -25,11 +27,13 @@ try:
     from .store import LiveRAGStore
 except ImportError:
     from embedding_client import ExternalEmbeddingClient
+    from policy import DEFAULT_POLICY_PATH, SemanticPolicy, load_semantic_policy
     from semantic_index import (
         DEFAULT_CHUNK_CHARS,
         DEFAULT_CHUNK_OVERLAP,
-        DEFAULT_EMBED_BATCH_SIZE,
+        DEFAULT_EMBEDDING_REQUEST_BATCH_SIZE,
         DEFAULT_EMBEDDING_MODEL,
+        DEFAULT_MESSAGE_FETCH_BATCH_SIZE,
         DEFAULT_MAX_MEMBER_COUNT,
         batched,
         build_config_signature,
@@ -68,17 +72,31 @@ def build_semantic_index(
     chunk_chars: int = DEFAULT_CHUNK_CHARS,
     chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
     max_member_count: int = DEFAULT_MAX_MEMBER_COUNT,
-    batch_size: int = 200,
+    message_fetch_batch_size: int = DEFAULT_MESSAGE_FETCH_BATCH_SIZE,
+    embedding_request_batch_size: int = DEFAULT_EMBEDDING_REQUEST_BATCH_SIZE,
     progress: bool = False,
     binary: str | None = str(DEFAULT_BINARY),
     chat_metadata: list[dict[str, Any]] | None = None,
+    policy: SemanticPolicy | None = None,
 ) -> dict[str, Any]:
+    effective_policy = policy or load_semantic_policy()
+    if effective_policy.default_max_member_count != max_member_count:
+        effective_policy = SemanticPolicy(
+            default_max_member_count=max_member_count,
+            allow_chat_ids=effective_policy.allow_chat_ids,
+            deny_chat_ids=effective_policy.deny_chat_ids,
+            chat_overrides=effective_policy.chat_overrides,
+            signature=effective_policy.signature,
+            source_path=effective_policy.source_path,
+            version=effective_policy.version,
+        )
     config_signature = build_config_signature(
         embedding_model=embedding_model,
         embedding_provider=embedding_provider,
         chunk_chars=chunk_chars,
         chunk_overlap=chunk_overlap,
-        max_member_count=max_member_count,
+        max_member_count=effective_policy.default_max_member_count,
+        policy_signature=effective_policy.signature,
     )
     existing = store.get_semantic_settings()
     if mode == "update" and existing and existing["config_signature"] != config_signature:
@@ -121,14 +139,14 @@ def build_semantic_index(
     last_log_id = cursor or 0
 
     while True:
-        fetch_limit = batch_size if remaining is None else min(batch_size, remaining)
+        fetch_limit = message_fetch_batch_size if remaining is None else min(message_fetch_batch_size, remaining)
         if fetch_limit <= 0:
             break
 
         messages = store.iter_messages_for_embedding(
             after_log_id=cursor,
             limit=fetch_limit,
-            max_member_count=max_member_count,
+            policy=effective_policy,
         )
         if not messages:
             break
@@ -147,7 +165,7 @@ def build_semantic_index(
             )
 
         vectors: list[list[float]] = []
-        for embed_batch in batched([chunk["chunk_text"] for chunk in chunks], DEFAULT_EMBED_BATCH_SIZE):
+        for embed_batch in batched([chunk["chunk_text"] for chunk in chunks], embedding_request_batch_size):
             vectors.extend(client.embed_documents(embed_batch))
         if len(vectors) != len(chunks):
             raise RuntimeError("Embedding response count did not match the number of chunks.")
@@ -170,8 +188,14 @@ def build_semantic_index(
         store.set_runtime_state("semantic_embedding_provider", embedding_provider or "")
         store.set_runtime_state("semantic_chunk_chars", str(chunk_chars))
         store.set_runtime_state("semantic_chunk_overlap", str(chunk_overlap))
-        store.set_runtime_state("semantic_max_member_count", str(max_member_count))
+        store.set_runtime_state("semantic_max_member_count", str(effective_policy.default_max_member_count))
         store.set_runtime_state("semantic_last_indexed_log_id", str(last_log_id))
+        store.set_runtime_state("semantic_policy_signature", effective_policy.signature)
+        store.set_runtime_state("semantic_policy_path", str(effective_policy.source_path))
+        store.set_runtime_state("semantic_message_fetch_batch_size", str(message_fetch_batch_size))
+        store.set_runtime_state("semantic_embedding_request_batch_size", str(embedding_request_batch_size))
+        if hasattr(client, "query_profile_version"):
+            store.set_runtime_state("semantic_query_profile_version", str(client.query_profile_version))
 
         if progress:
             print(
@@ -204,10 +228,14 @@ def build_semantic_index(
         "provider": embedding_provider,
         "config_signature": config_signature,
         "batches": batches,
-        "batch_size": batch_size,
+        "message_fetch_batch_size": message_fetch_batch_size,
+        "embedding_request_batch_size": embedding_request_batch_size,
         "chat_metadata_count": metadata_result["chat_count"],
-        "excluded_chat_count": len(store.excluded_chat_ids_for_embedding(max_member_count=max_member_count)),
-        "max_member_count": max_member_count,
+        "excluded_chat_count": len(store.excluded_chat_ids_for_embedding(policy=effective_policy)),
+        "max_member_count": effective_policy.default_max_member_count,
+        "policy_signature": effective_policy.signature,
+        "policy_path": str(effective_policy.source_path),
+        "query_profile_version": getattr(client, "query_profile_version", None),
     }
 
 
@@ -222,7 +250,10 @@ def main() -> None:
     parser.add_argument("--chunk-chars", type=int, default=DEFAULT_CHUNK_CHARS)
     parser.add_argument("--chunk-overlap", type=int, default=DEFAULT_CHUNK_OVERLAP)
     parser.add_argument("--max-member-count", type=int, default=DEFAULT_MAX_MEMBER_COUNT)
-    parser.add_argument("--batch-size", type=int, default=200)
+    parser.add_argument("--policy-path", default=str(DEFAULT_POLICY_PATH))
+    parser.add_argument("--message-fetch-batch-size", type=int, default=DEFAULT_MESSAGE_FETCH_BATCH_SIZE)
+    parser.add_argument("--embedding-request-batch-size", type=int, default=DEFAULT_EMBEDDING_REQUEST_BATCH_SIZE)
+    parser.add_argument("--batch-size", type=int)
     parser.add_argument("--progress", action="store_true")
     args = parser.parse_args()
 
@@ -231,6 +262,9 @@ def main() -> None:
         model=args.embedding_model,
         provider=args.embedding_provider,
     )
+    effective_message_fetch_batch_size = args.batch_size or args.message_fetch_batch_size
+    effective_embedding_request_batch_size = args.batch_size or args.embedding_request_batch_size
+    policy = load_semantic_policy(Path(args.policy_path))
     try:
         payload = build_semantic_index(
             store,
@@ -242,9 +276,11 @@ def main() -> None:
             chunk_chars=args.chunk_chars,
             chunk_overlap=args.chunk_overlap,
             max_member_count=args.max_member_count,
-            batch_size=args.batch_size,
+            message_fetch_batch_size=effective_message_fetch_batch_size,
+            embedding_request_batch_size=effective_embedding_request_batch_size,
             progress=args.progress,
             binary=args.binary,
+            policy=policy,
         )
     except Exception as error:
         payload = {

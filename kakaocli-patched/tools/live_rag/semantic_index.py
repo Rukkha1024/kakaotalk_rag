@@ -15,11 +15,14 @@ DEFAULT_EMBEDDING_MODEL = "Qwen/Qwen3-Embedding-8B"
 DEFAULT_SEMANTIC_TOP_K = 24
 DEFAULT_CHUNK_CHARS = 400
 DEFAULT_CHUNK_OVERLAP = 80
-DEFAULT_EMBED_BATCH_SIZE = 16
+DEFAULT_MESSAGE_FETCH_BATCH_SIZE = 200
+DEFAULT_EMBEDDING_REQUEST_BATCH_SIZE = 16
+DEFAULT_EMBED_BATCH_SIZE = DEFAULT_EMBEDDING_REQUEST_BATCH_SIZE
 DEFAULT_FUSION_K = 60
 SEMANTIC_TEXT_TEMPLATE_VERSION = "v2"
 EMBEDDING_RULE_VERSION = "v1-member-count-cap"
 DEFAULT_MAX_MEMBER_COUNT = 30
+SENTENCE_BOUNDARY_PATTERN = re.compile(r"(?<=[.!?]|[다요])\s+|\n+")
 
 
 def build_config_signature(
@@ -29,6 +32,7 @@ def build_config_signature(
     chunk_chars: int,
     chunk_overlap: int,
     max_member_count: int,
+    policy_signature: str | None = None,
 ) -> str:
     payload = {
         "embedding_model": embedding_model,
@@ -38,6 +42,7 @@ def build_config_signature(
         "semantic_text_template": SEMANTIC_TEXT_TEMPLATE_VERSION,
         "embedding_rule_version": EMBEDDING_RULE_VERSION,
         "max_member_count": max_member_count,
+        "policy_signature": policy_signature or "",
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
@@ -127,22 +132,45 @@ def reciprocal_rank_fuse(
             if existing is None:
                 clone = {
                     "score": fused_score,
+                    "fusion_score": fused_score,
+                    "lexical_score": hit.get("lexical_score"),
+                    "semantic_score": hit.get("semantic_score"),
                     "message": hit["message"],
                     "context_before": hit.get("context_before", []),
                     "context_after": hit.get("context_after", []),
-                    "sources": [source],
+                    "retrieval_sources": [source],
+                    "matched_chunk_text": hit.get("matched_chunk_text"),
+                    "matched_chunk_id": hit.get("matched_chunk_id"),
+                    "semantic_config_signature": hit.get("semantic_config_signature"),
+                    "embedding_model": hit.get("embedding_model"),
+                    "embedding_provider": hit.get("embedding_provider"),
                 }
                 fused[log_id] = clone
                 continue
             existing["score"] = float(existing["score"]) + fused_score
-            sources = set(existing.get("sources", []))
+            existing["fusion_score"] = float(existing.get("fusion_score", 0.0)) + fused_score
+            if source == "lexical":
+                existing["lexical_score"] = hit.get("lexical_score")
+            if source == "semantic":
+                existing["semantic_score"] = hit.get("semantic_score")
+                if hit.get("matched_chunk_text"):
+                    existing["matched_chunk_text"] = hit.get("matched_chunk_text")
+                if hit.get("matched_chunk_id"):
+                    existing["matched_chunk_id"] = hit.get("matched_chunk_id")
+                if hit.get("semantic_config_signature"):
+                    existing["semantic_config_signature"] = hit.get("semantic_config_signature")
+                if hit.get("embedding_model"):
+                    existing["embedding_model"] = hit.get("embedding_model")
+                if hit.get("embedding_provider"):
+                    existing["embedding_provider"] = hit.get("embedding_provider")
+            sources = set(existing.get("retrieval_sources", []))
             sources.add(source)
-            existing["sources"] = sorted(sources)
+            existing["retrieval_sources"] = sorted(sources)
 
     ranked = sorted(
         fused.values(),
         key=lambda item: (
-            -float(item["score"]),
+            -float(item.get("fusion_score", item["score"])),
             item["message"].get("timestamp", ""),
             int(item["message"]["log_id"]),
         ),
@@ -162,6 +190,13 @@ def batched(items: Iterable[Any], batch_size: int) -> Iterable[list[Any]]:
 def _split_text(text: str, *, chunk_chars: int, chunk_overlap: int) -> list[str]:
     if len(text) <= chunk_chars:
         return [text]
+    if text.count("\n") >= 2:
+        line_chunks = _split_line_aware(text, chunk_chars=chunk_chars, chunk_overlap=chunk_overlap)
+        if len(line_chunks) > 1:
+            return line_chunks
+    sentence_chunks = _split_sentence_aware(text, chunk_chars=chunk_chars, chunk_overlap=chunk_overlap)
+    if len(sentence_chunks) > 1:
+        return sentence_chunks
 
     chunks: list[str] = []
     step = max(1, chunk_chars - chunk_overlap)
@@ -173,6 +208,47 @@ def _split_text(text: str, *, chunk_chars: int, chunk_overlap: int) -> list[str]
         if start + chunk_chars >= len(text):
             break
         start += step
+    return chunks
+
+
+def _split_line_aware(text: str, *, chunk_chars: int, chunk_overlap: int) -> list[str]:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if len(lines) <= 1:
+        return []
+    chunks: list[str] = []
+    current: list[str] = []
+    current_length = 0
+    overlap_lines = max(1, chunk_overlap // max(1, chunk_chars // max(1, len(lines))))
+    for line in lines:
+        line_length = len(line) + (1 if current else 0)
+        if current and current_length + line_length > chunk_chars:
+            chunks.append("\n".join(current))
+            current = current[-overlap_lines:] if overlap_lines < len(current) else list(current)
+            current_length = len("\n".join(current))
+        current.append(line)
+        current_length = len("\n".join(current))
+    if current:
+        chunks.append("\n".join(current))
+    return chunks
+
+
+def _split_sentence_aware(text: str, *, chunk_chars: int, chunk_overlap: int) -> list[str]:
+    parts = [part.strip() for part in SENTENCE_BOUNDARY_PATTERN.split(text) if part.strip()]
+    if len(parts) <= 1:
+        return []
+    chunks: list[str] = []
+    current = ""
+    overlap_chars = max(0, chunk_overlap)
+    for part in parts:
+        candidate = part if not current else f"{current} {part}".strip()
+        if current and len(candidate) > chunk_chars:
+            chunks.append(current)
+            overlap = current[-overlap_chars:].strip() if overlap_chars else ""
+            current = f"{overlap} {part}".strip() if overlap else part
+            continue
+        current = candidate
+    if current:
+        chunks.append(current)
     return chunks
 
 
