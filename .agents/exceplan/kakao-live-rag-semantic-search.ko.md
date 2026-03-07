@@ -14,10 +14,10 @@
 - [x] (2026-03-07 06:03Z) `docs/issue/issue003.md`와 `docs/dev/issue/issue003.ko.md`에 영문/국문 추적 이슈 문서를 저장했다.
 - [x] (2026-03-07 06:03Z) `.agents/exceplan/` 아래에 이 영문/국문 ExecPlan 문서를 저장했다.
 - [x] (2026-03-07 06:24Z) 리뷰 지적사항을 반영해 두 ExecPlan을 함께 수정했고, 검증 경로를 재현 가능하게 만들고, AGENTS 퇴역 검사는 `kakaocli-patched/` 범위로 좁혔으며, 기록 대상도 현재 저장소에 실제로 존재하는 issue/progress 경로로 바꿨다.
-- [ ] `kakaocli-patched/AGENTS.md` 내용을 `kakaocli-patched/README.md`로 병합하고, 별도 repo-local AGENTS 파일을 전제하는 링크를 제거한 뒤 `kakaocli-patched/AGENTS.md`를 삭제한다.
-- [ ] 기존 `messages` 테이블을 읽어 텍스트 윈도우를 나누고 외부 임베딩 API 모델을 호출하며 `.data/` 아래에 로컬 임베딩 메타데이터를 저장하는 시맨틱 인덱싱 경로를 추가한다.
-- [ ] 기존 동작을 깨지 않으면서 현재 서비스와 CLI에 `lexical`, `semantic`, `hybrid` 검색 모드를 노출한다.
-- [ ] 끝까지 검증하고, 검색 파이프라인이 바뀐 부분은 안정적인 출력 기준으로 MD5 비교를 수행하며, 문서를 업데이트하고, 구현 메모를 `docs/issue/issue003.md`와 `docs/dev/issue/issue003.ko.md`에 남기며, 별도 우회책이 필요하면 `kakaocli-patched/progress/` 아래에 기록한다.
+- [x] (2026-03-07 07:25Z) repo-local `kakaocli-patched/AGENTS.md` 내용을 `kakaocli-patched/README.md`로 병합하고, 별도 repo-local AGENTS 파일을 전제하던 README 링크를 제거한 뒤 `kakaocli-patched/AGENTS.md`를 삭제했다.
+- [x] (2026-03-07 07:25Z) 기존 `messages` 테이블을 읽어 텍스트를 chunk로 나누고, `huggingface_hub`를 통해 외부 임베딩 API를 호출하며, `.data/` 아래 Live RAG SQLite 안에 로컬 시맨틱 메타데이터를 저장하는 경로를 추가했다.
+- [x] (2026-03-07 07:25Z) 기존 lexical fallback을 제거하지 않고 현재 서비스와 CLI에 `lexical`, `semantic`, `hybrid` 검색 모드를 노출했다.
+- [ ] 검증은 일부만 완료됐다 (완료: 의존성 설치, wrapper 재빌드, lexical smoke test, 서비스 재시작, AGENTS 퇴역 grep, JSON 형태의 semantic 실패 검증; 남음: inference provider 권한이 있는 토큰으로 semantic build/query 성공 확인, 그리고 live sync가 중간에 slice를 바꾸지 않는 조용한 데이터셋에서 MD5 재확인).
 
 ## 놀라운 점과 발견 사항
 
@@ -35,6 +35,15 @@
 
 - Observation: 실제 운영자가 쓰는 wrapper 경로는 conda 환경을 직접 실행하지 않고, `kakaocli-patched/bin/query-kakao`가 repo-local `.venv`를 사용하며 `./bin/install-kakaocli`로 그 환경을 준비한다.
   Evidence: `kakaocli-patched/bin/query-kakao`는 `.venv/bin/python`을 `LIVE_RAG_PYTHON`으로 내보내고, `kakaocli-patched/bin/install-kakaocli`는 `requirements-live-rag.txt` 기준으로 그 환경을 다시 만든다.
+
+- Observation: `huggingface_hub==1.1.0`의 `InferenceClient.feature_extraction`은 텍스트 목록 배치 입력이 아니라 단일 텍스트 호출 인터페이스를 노출한다.
+  Evidence: 로컬 시그니처 점검 결과 `feature_extraction(self, text: str, ..., model: Optional[str] = None) -> np.ndarray` 형태였기 때문에, 문서 임베딩은 텍스트별 반복 호출로 구현해야 했다.
+
+- Observation: 이 Mac의 현재 Hugging Face cached login은 존재하지만 임베딩용 inference provider 호출 권한이 없다.
+  Evidence: `tools/live_rag/validate_semantic.py --use-temp-db`와 `tools/live_rag/build_semantic_index.py`가 `--embedding-provider hf-inference`를 주어도 `router.huggingface.co`에서 `403 Forbidden`을 반환했다.
+
+- Observation: `/messages?limit=200` MD5가 전후 스냅샷에서 달라진 이유는 구현 중에도 live ingestion이 계속 진행됐기 때문이다.
+  Evidence: 두 export 모두 200개 항목을 유지했지만, 가장 최신/가장 오래된 `log_id`가 바뀌어 응답 스키마 회귀가 아니라 수집 드리프트임을 보여 줬다.
 
 ## 결정 기록
 
@@ -66,9 +75,13 @@
   Rationale: 실제 Kakao 대화 이력은 머신마다 다르므로 고정된 실데이터 질의를 주 완료 기준으로 두면 재현 가능하지 않다. 임시 fixture 데이터베이스는 반복 가능한 증거를 주고, 실제 데이터베이스는 wrapper와 ingestion 경로가 계속 usable함을 보여준다.
   Date/Author: 2026-03-07 / Codex
 
+- Decision: `rebuild` 시 기존 semantic sidecar 삭제는 임베딩 호출이 성공한 뒤로 미루고, semantic build/validation 진입점은 JSON 오류 payload를 출력한다.
+  Rationale: Hugging Face 인증이 실패해도 기존 semantic 상태를 보존해야 하며, 운영자는 traceback보다 기계가 읽을 수 있는 실패 출력이 필요하다.
+  Date/Author: 2026-03-07 / Codex
+
 ## 결과와 회고
 
-아직 구현은 시작되지 않았다. 첫 실행 단계의 목표 결과는 같은 질의를 세 가지 방식으로 처리할 수 있는 로컬 Kakao 검색 서비스다. 즉 정확한 단어 일치 기반 lexical 검색, 의미 기반 semantic 검색, 그리고 두 결과를 결합한 hybrid 검색이 모두 동작해야 한다. 같은 단계에서 패치 저장소의 사람 대상 운영 문서도 `kakaocli-patched/README.md` 하나로 정리되어야 하며, 사용자가 설치, 로그인, Live RAG 라우팅, 운영상 주의점을 이해하기 위해 두 번째 repo-local `AGENTS.md` 파일을 읽을 필요가 없어야 한다. 이제 이 계획은 결정적인 fixture 기반 시맨틱 검증 경로와 구체적인 기록 대상까지 포함하므로, 초심자도 빠진 단계를 추정하지 않고 실행할 수 있다.
+구현은 이제 들어가 있다. 패치 저장소는 `kakaocli-patched/README.md` 하나로 운영 가이드를 통합했고, 중복 repo-local `AGENTS.md` 파일은 제거했다. Live RAG 경로에는 semantic sidecar 빌드/갱신 스크립트와 서비스/CLI의 `lexical`, `semantic`, `hybrid` 검색 모드가 추가됐다. 관리형 서비스를 재시작한 뒤 lexical 동작은 여전히 wrapper를 통해 정상 동작했다. 남은 공백은 코드 자체가 아니라 환경 증명이다. 이 Mac의 Hugging Face cached credential은 현재 inference provider 권한이 없어서 결정적인 semantic validation과 실제 semantic index build가 차단되어 있다. 또한 MD5 비교는 구현 중 live sync가 새 row를 계속 받아 왔기 때문에, 조용하거나 고정된 데이터셋에서 다시 수행해야 한다.
 
 ## 맥락과 구조 설명
 

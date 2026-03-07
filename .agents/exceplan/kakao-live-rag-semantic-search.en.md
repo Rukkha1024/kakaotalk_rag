@@ -14,10 +14,10 @@ After this change, the existing Kakao Live RAG flow will still ingest messages l
 - [x] (2026-03-07 06:03Z) Saved bilingual tracking issue documents as `docs/issue/issue003.md` and `docs/dev/issue/issue003.ko.md`.
 - [x] (2026-03-07 06:03Z) Saved this English ExecPlan and the Korean counterpart under `.agents/exceplan/`.
 - [x] (2026-03-07 06:24Z) Revised both ExecPlan files after review so the validation path is reproducible, the AGENTS retirement check only searches `kakaocli-patched/`, and bookkeeping points to concrete issue/progress paths that exist in this repo.
-- [ ] Merge the repo-local `kakaocli-patched/AGENTS.md` content into `kakaocli-patched/README.md`, remove links that require a separate repo-local AGENTS file, and delete `kakaocli-patched/AGENTS.md`.
-- [ ] Add a semantic indexing path that reads from the existing `messages` table, chunks text windows, calls an external embedding API model, and stores local embeddings metadata under `.data/`.
-- [ ] Expose `lexical`, `semantic`, and `hybrid` retrieval through the existing service and CLI without breaking current behavior.
-- [ ] Validate end to end, compare stable outputs with MD5 where the retrieval pipeline changed, update docs, record implementation notes in `docs/issue/issue003.md` and `docs/dev/issue/issue003.ko.md`, and capture any separate reusable workaround note under `kakaocli-patched/progress/`.
+- [x] (2026-03-07 07:25Z) Merged the repo-local `kakaocli-patched/AGENTS.md` content into `kakaocli-patched/README.md`, removed README links that required a separate repo-local AGENTS file, and deleted `kakaocli-patched/AGENTS.md`.
+- [x] (2026-03-07 07:25Z) Added a semantic indexing path that reads from the existing `messages` table, chunks text windows, calls the Hugging Face embedding API through `huggingface_hub`, and stores local semantic metadata in the Live RAG SQLite database under `.data/`.
+- [x] (2026-03-07 07:25Z) Exposed `lexical`, `semantic`, and `hybrid` retrieval through the existing service and CLI without removing the lexical fallback path.
+- [ ] Validation is partially complete (completed: dependency install, wrapper rebuild, lexical smoke test, service restart, AGENTS-retirement grep, structured semantic failure checks; remaining: successful semantic build/query with a token that has provider permission, and MD5 capture on a quiescent dataset so live sync does not change the slice mid-run).
 
 ## Surprises & Discoveries
 
@@ -35,6 +35,15 @@ After this change, the existing Kakao Live RAG flow will still ingest messages l
 
 - Observation: the operator-facing wrapper path does not run the conda environment directly; `kakaocli-patched/bin/query-kakao` uses the repo-local `.venv` and bootstraps it through `./bin/install-kakaocli`.
   Evidence: `kakaocli-patched/bin/query-kakao` exports `LIVE_RAG_PYTHON` from `.venv/bin/python`, and `kakaocli-patched/bin/install-kakaocli` rebuilds that environment from `requirements-live-rag.txt`.
+
+- Observation: `huggingface_hub==1.1.0` exposes `InferenceClient.feature_extraction` as a single-text call, not a list-of-texts batch API.
+  Evidence: local signature inspection showed `feature_extraction(self, text: str, ..., model: Optional[str] = None) -> np.ndarray`, so document embedding had to loop one text at a time.
+
+- Observation: the current cached Hugging Face login on this Mac exists but lacks permission to call inference providers for embeddings.
+  Evidence: both `tools/live_rag/validate_semantic.py --use-temp-db` and `tools/live_rag/build_semantic_index.py` returned `403 Forbidden` from `router.huggingface.co`, even when `--embedding-provider hf-inference` was specified.
+
+- Observation: the `/messages?limit=200` MD5 changed across the before/after snapshots because live ingestion continued while implementation was in progress.
+  Evidence: both exports still contained 200 items, but the newest and oldest `log_id` values shifted between captures, which indicates ingestion drift rather than a response-shape regression.
 
 ## Decision Log
 
@@ -66,9 +75,13 @@ After this change, the existing Kakao Live RAG flow will still ingest messages l
   Rationale: Real Kakao history differs across machines, so a fixed live query cannot be the primary proof of semantic behavior. A temporary fixture database gives reproducible evidence, while the real database still proves the wrapper and ingestion path remain usable.
   Date/Author: 2026-03-07 / Codex
 
+- Decision: Delay `rebuild` sidecar deletion until after embedding calls succeed, and emit JSON error payloads from the semantic build/validation entrypoints.
+  Rationale: If Hugging Face authentication fails, the existing semantic state should remain intact, and operators need machine-readable failure output instead of raw tracebacks.
+  Date/Author: 2026-03-07 / Codex
+
 ## Outcomes & Retrospective
 
-No implementation has started yet. The intended outcome of the first execution pass is a working local Kakao retrieval service that can answer the same query through three modes: exact lexical matching, meaning-based semantic matching, and a hybrid list that combines both. The same pass must also leave the patched repo with one human-facing operations guide, `kakaocli-patched/README.md`, so a user does not need to read a second repo-local `AGENTS.md` file to understand installation, login, Live RAG routing, or operational caveats. The plan now also defines a deterministic fixture-based semantic proof path and concrete bookkeeping destinations so a novice can execute the work without inventing missing steps.
+Implementation is now in place. The patched repo has one operator-facing guide in `kakaocli-patched/README.md`, the duplicate repo-local `AGENTS.md` file is gone, and the Live RAG code path now includes semantic-sidecar build/update scripts plus `lexical`, `semantic`, and `hybrid` retrieval modes in the service and CLI. Lexical behavior still works through the managed wrapper after a service restart. The remaining gap is not code shape but environment proof: this Mac's cached Hugging Face credentials do not currently have inference-provider permission, so the deterministic semantic validation and a real semantic index build are blocked until a suitable token is supplied. The MD5 comparison also needs to be rerun against a quiet or frozen dataset because live sync kept ingesting newer rows during the implementation window.
 
 ## Context and Orientation
 

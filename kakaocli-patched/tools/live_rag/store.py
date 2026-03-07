@@ -1,7 +1,7 @@
-"""SQLite store for Kakao Live RAG ingestion and retrieval.
+"""SQLite store for Kakao Live RAG.
 
-Keeps canonical messages, FTS search data, and restart
-checkpoint state in one local database.
+Keeps canonical messages, lexical search state,
+and semantic sidecar data in one local database.
 """
 
 from __future__ import annotations
@@ -11,6 +11,8 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+
+import numpy as np
 
 
 SCHEMA = """
@@ -57,7 +59,43 @@ CREATE TABLE IF NOT EXISTS live_rag_state (
     value TEXT NOT NULL,
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
+
+CREATE TABLE IF NOT EXISTS semantic_chunks (
+    chunk_id TEXT PRIMARY KEY,
+    log_id INTEGER NOT NULL,
+    chat_id INTEGER NOT NULL,
+    chat_name TEXT,
+    sender TEXT,
+    timestamp TEXT NOT NULL,
+    chunk_index INTEGER NOT NULL,
+    chunk_text TEXT NOT NULL,
+    vector_json TEXT NOT NULL,
+    embedding_model TEXT NOT NULL,
+    embedding_provider TEXT,
+    config_signature TEXT NOT NULL,
+    source_signature TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_semantic_chunks_log_id
+    ON semantic_chunks (log_id);
+
+CREATE INDEX IF NOT EXISTS idx_semantic_chunks_config
+    ON semantic_chunks (config_signature, timestamp);
+
+CREATE INDEX IF NOT EXISTS idx_semantic_chunks_chat_sender
+    ON semantic_chunks (chat_id, sender, timestamp);
 """
+
+SEMANTIC_STATE_KEYS = (
+    "semantic_config_signature",
+    "semantic_embedding_model",
+    "semantic_embedding_provider",
+    "semantic_chunk_chars",
+    "semantic_chunk_overlap",
+    "semantic_last_indexed_log_id",
+)
 
 
 class LiveRAGStore:
@@ -214,6 +252,20 @@ class LiveRAGStore:
             stats = dict(row) if row is not None else {}
             stats["last_ingested_log_id"] = self._get_int_state(connection, "last_ingested_log_id")
             stats["last_ingest_source"] = self._get_state(connection, "last_ingest_source")
+            semantic_stats = connection.execute(
+                """
+                SELECT
+                    COUNT(*) AS semantic_chunk_count,
+                    COUNT(DISTINCT log_id) AS semantic_message_count
+                FROM semantic_chunks
+                """
+            ).fetchone()
+            if semantic_stats is not None:
+                stats.update(dict(semantic_stats))
+            stats["semantic_config_signature"] = self._get_state(connection, "semantic_config_signature")
+            stats["semantic_embedding_model"] = self._get_state(connection, "semantic_embedding_model")
+            stats["semantic_embedding_provider"] = self._get_state(connection, "semantic_embedding_provider")
+            stats["semantic_last_indexed_log_id"] = self._get_int_state(connection, "semantic_last_indexed_log_id")
             return stats
 
     def list_messages(
@@ -278,6 +330,113 @@ class LiveRAGStore:
                 for row in rows
             ]
 
+    def iter_messages_for_embedding(
+        self,
+        after_log_id: int | None,
+        limit: int | None,
+    ) -> list[dict[str, Any]]:
+        clauses = ["COALESCE(TRIM(text), '') != ''"]
+        params: list[Any] = []
+        if after_log_id is not None:
+            clauses.append("log_id > ?")
+            params.append(after_log_id)
+        limit_sql = ""
+        if limit is not None:
+            limit_sql = "LIMIT ?"
+            params.append(limit)
+
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT *
+                FROM messages
+                WHERE {' AND '.join(clauses)}
+                ORDER BY log_id ASC
+                {limit_sql}
+                """,
+                params,
+            ).fetchall()
+            return [self._serialize_row(row) for row in rows]
+
+    def clear_semantic_index(self) -> None:
+        with self._connect() as connection:
+            connection.execute("DELETE FROM semantic_chunks")
+            for key in SEMANTIC_STATE_KEYS:
+                self._delete_state(connection, key)
+            connection.commit()
+
+    def upsert_semantic_chunks(self, chunks: list[dict[str, Any]]) -> dict[str, int]:
+        if not chunks:
+            return {"messages_indexed": 0, "chunks_indexed": 0}
+
+        log_ids = sorted({int(chunk["log_id"]) for chunk in chunks})
+        with self._connect() as connection:
+            connection.execute(
+                f"DELETE FROM semantic_chunks WHERE log_id IN ({','.join('?' for _ in log_ids)})",
+                log_ids,
+            )
+            for chunk in chunks:
+                connection.execute(
+                    """
+                    INSERT INTO semantic_chunks (
+                        chunk_id,
+                        log_id,
+                        chat_id,
+                        chat_name,
+                        sender,
+                        timestamp,
+                        chunk_index,
+                        chunk_text,
+                        vector_json,
+                        embedding_model,
+                        embedding_provider,
+                        config_signature,
+                        source_signature,
+                        updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+                    """,
+                    (
+                        chunk["chunk_id"],
+                        int(chunk["log_id"]),
+                        int(chunk["chat_id"]),
+                        chunk.get("chat_name"),
+                        chunk.get("sender"),
+                        str(chunk["timestamp"]),
+                        int(chunk["chunk_index"]),
+                        str(chunk["chunk_text"]),
+                        json.dumps(chunk["vector"], ensure_ascii=False, separators=(",", ":")),
+                        str(chunk["embedding_model"]),
+                        chunk.get("embedding_provider"),
+                        str(chunk["config_signature"]),
+                        str(chunk["source_signature"]),
+                    ),
+                )
+            connection.commit()
+
+        return {"messages_indexed": len(log_ids), "chunks_indexed": len(chunks)}
+
+    def set_runtime_state(self, key: str, value: str) -> None:
+        with self._connect() as connection:
+            self._set_state(connection, key, value)
+            connection.commit()
+
+    def get_semantic_settings(self) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            config_signature = self._get_state(connection, "semantic_config_signature")
+            embedding_model = self._get_state(connection, "semantic_embedding_model")
+            if not config_signature or not embedding_model:
+                return None
+            return {
+                "config_signature": config_signature,
+                "embedding_model": embedding_model,
+                "embedding_provider": self._empty_to_none(
+                    self._get_state(connection, "semantic_embedding_provider")
+                ),
+                "chunk_chars": self._get_int_state(connection, "semantic_chunk_chars"),
+                "chunk_overlap": self._get_int_state(connection, "semantic_chunk_overlap"),
+                "last_indexed_log_id": self._get_int_state(connection, "semantic_last_indexed_log_id"),
+            }
+
     def retrieve(
         self,
         *,
@@ -285,6 +444,28 @@ class LiveRAGStore:
         limit: int = 8,
         chat_id: int | None = None,
         speaker: str | None = None,
+        since_days: float | None = None,
+        context_before: int = 2,
+        context_after: int = 2,
+    ) -> list[dict[str, Any]]:
+        return self.retrieve_lexical(
+            query=query,
+            limit=limit,
+            chat_id=chat_id,
+            speaker=speaker,
+            since_days=since_days,
+            context_before=context_before,
+            context_after=context_after,
+        )
+
+    def retrieve_lexical(
+        self,
+        *,
+        query: str,
+        limit: int = 8,
+        chat_id: int | None = None,
+        speaker: str | None = None,
+        since_days: float | None = None,
         context_before: int = 2,
         context_after: int = 2,
     ) -> list[dict[str, Any]]:
@@ -297,6 +478,7 @@ class LiveRAGStore:
                 limit=limit,
                 chat_id=chat_id,
                 speaker=speaker,
+                since_days=since_days,
                 context_before=context_before,
                 context_after=context_after,
             )
@@ -306,19 +488,120 @@ class LiveRAGStore:
                 limit=limit,
                 chat_id=chat_id,
                 speaker=speaker,
+                since_days=since_days,
                 context_before=context_before,
                 context_after=context_after,
             )
 
-        return [
-            {
-                "score": hit["score"],
-                "message": self._serialize_row(hit["message"]),
-                "context_before": [self._serialize_row(row) for row in hit["context_before"]],
-                "context_after": [self._serialize_row(row) for row in hit["context_after"]],
-            }
-            for hit in hits
-        ]
+        return [self._serialize_hit(hit) for hit in hits]
+
+    def retrieve_semantic(
+        self,
+        *,
+        query_vector: list[float],
+        limit: int = 8,
+        semantic_top_k: int = 24,
+        chat_id: int | None = None,
+        speaker: str | None = None,
+        since_days: float | None = None,
+        context_before: int = 2,
+        context_after: int = 2,
+        config_signature: str | None = None,
+    ) -> list[dict[str, Any]]:
+        matches = self.semantic_search(
+            query_vector=query_vector,
+            limit=semantic_top_k,
+            chat_id=chat_id,
+            speaker=speaker,
+            since_days=since_days,
+            config_signature=config_signature,
+        )
+        if not matches:
+            return []
+
+        with self._connect() as connection:
+            hits = [
+                self._expand_message_hit(
+                    connection,
+                    log_id=int(match["log_id"]),
+                    score=float(match["score"]),
+                    context_before=context_before,
+                    context_after=context_after,
+                )
+                for match in matches[:limit]
+            ]
+        return [self._serialize_hit(hit) for hit in hits]
+
+    def semantic_search(
+        self,
+        query_vector: list[float],
+        limit: int,
+        chat_id: int | None = None,
+        speaker: str | None = None,
+        since_days: float | None = None,
+        config_signature: str | None = None,
+    ) -> list[dict[str, Any]]:
+        signature = config_signature
+        with self._connect() as connection:
+            if signature is None:
+                signature = self._get_state(connection, "semantic_config_signature")
+            if not signature:
+                return []
+
+            clauses = ["config_signature = ?"]
+            params: list[Any] = [signature]
+            if chat_id is not None:
+                clauses.append("chat_id = ?")
+                params.append(chat_id)
+            if speaker:
+                clauses.append("sender = ?")
+                params.append(speaker)
+            if since_days is not None:
+                cutoff = self._utc_now() - timedelta(days=since_days)
+                clauses.append("timestamp >= ?")
+                params.append(self._isoformat(cutoff))
+
+            rows = connection.execute(
+                f"""
+                SELECT *
+                FROM semantic_chunks
+                WHERE {' AND '.join(clauses)}
+                ORDER BY log_id ASC, chunk_index ASC
+                """,
+                params,
+            ).fetchall()
+
+        if not rows:
+            return []
+
+        query_array = self._normalize_vector(query_vector)
+        best_by_log_id: dict[int, dict[str, Any]] = {}
+        for row in rows:
+            vector = self._parse_vector(row["vector_json"])
+            if vector.size != query_array.size:
+                continue
+            score = float(np.dot(query_array, vector))
+            log_id = int(row["log_id"])
+            current = best_by_log_id.get(log_id)
+            if current is None or score > float(current["score"]):
+                best_by_log_id[log_id] = {
+                    "log_id": log_id,
+                    "chat_id": int(row["chat_id"]),
+                    "sender": row["sender"],
+                    "timestamp": row["timestamp"],
+                    "score": score,
+                    "chunk_text": row["chunk_text"],
+                }
+
+        ranked = sorted(
+            best_by_log_id.values(),
+            key=lambda item: (-float(item["score"]), item["timestamp"], item["log_id"]),
+        )
+        return ranked[:limit]
+
+    def last_ingested_log_id(self) -> int | None:
+        with self._connect() as connection:
+            return self._get_int_state(connection, "last_ingested_log_id")
 
     def _fts_hits(
         self,
@@ -327,6 +610,7 @@ class LiveRAGStore:
         limit: int,
         chat_id: int | None,
         speaker: str | None,
+        since_days: float | None,
         context_before: int,
         context_after: int,
     ) -> list[dict[str, Any]]:
@@ -339,6 +623,10 @@ class LiveRAGStore:
         if speaker:
             clauses.append("m.sender = ?")
             params.append(speaker)
+        if since_days is not None:
+            cutoff = self._utc_now() - timedelta(days=since_days)
+            clauses.append("m.timestamp >= ?")
+            params.append(self._isoformat(cutoff))
         params.append(limit)
 
         with self._connect() as connection:
@@ -372,6 +660,7 @@ class LiveRAGStore:
         limit: int,
         chat_id: int | None,
         speaker: str | None,
+        since_days: float | None,
         context_before: int,
         context_after: int,
     ) -> list[dict[str, Any]]:
@@ -384,6 +673,10 @@ class LiveRAGStore:
         if speaker:
             clauses.append("sender = ?")
             params.append(speaker)
+        if since_days is not None:
+            cutoff = self._utc_now() - timedelta(days=since_days)
+            clauses.append("timestamp >= ?")
+            params.append(self._isoformat(cutoff))
         params.append(limit)
 
         with self._connect() as connection:
@@ -415,8 +708,36 @@ class LiveRAGStore:
         context_before: int,
         context_after: int,
     ) -> dict[str, Any]:
-        current_log_id = row["log_id"]
-        chat_id = row["chat_id"]
+        return self._expand_message_hit(
+            connection,
+            log_id=int(row["log_id"]),
+            score=float(row["score"]),
+            context_before=context_before,
+            context_after=context_after,
+            row=row,
+        )
+
+    def _expand_message_hit(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        log_id: int,
+        score: float,
+        context_before: int,
+        context_after: int,
+        row: sqlite3.Row | None = None,
+    ) -> dict[str, Any]:
+        message_row = row
+        if message_row is None:
+            message_row = connection.execute(
+                "SELECT * FROM messages WHERE log_id = ?",
+                (log_id,),
+            ).fetchone()
+        if message_row is None:
+            raise LookupError(f"Missing message row for log_id={log_id}")
+
+        current_log_id = int(message_row["log_id"])
+        chat_id = int(message_row["chat_id"])
         before_rows = connection.execute(
             """
             SELECT *
@@ -439,10 +760,18 @@ class LiveRAGStore:
         ).fetchall()
 
         return {
-            "score": float(row["score"]),
-            "message": row,
+            "score": score,
+            "message": message_row,
             "context_before": list(reversed(before_rows)),
             "context_after": list(after_rows),
+        }
+
+    def _serialize_hit(self, hit: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "score": float(hit["score"]),
+            "message": self._serialize_row(hit["message"]),
+            "context_before": [self._serialize_row(row) for row in hit["context_before"]],
+            "context_after": [self._serialize_row(row) for row in hit["context_after"]],
         }
 
     def _normalize_message(self, message: dict[str, Any]) -> dict[str, Any]:
@@ -472,10 +801,6 @@ class LiveRAGStore:
             "timestamp": row["timestamp"],
             "is_from_me": bool(row["is_from_me"]),
         }
-
-    def last_ingested_log_id(self) -> int | None:
-        with self._connect() as connection:
-            return self._get_int_state(connection, "last_ingested_log_id")
 
     def _ensure_checkpoint_state(self, connection: sqlite3.Connection) -> None:
         if self._get_int_state(connection, "last_ingested_log_id") is not None:
@@ -518,10 +843,33 @@ class LiveRAGStore:
             (key, value),
         )
 
+    def _delete_state(self, connection: sqlite3.Connection, key: str) -> None:
+        connection.execute("DELETE FROM live_rag_state WHERE key = ?", (key,))
+
+    @staticmethod
+    def _normalize_vector(vector: list[float]) -> np.ndarray:
+        array = np.asarray(vector, dtype=np.float32)
+        if array.ndim != 1 or array.size == 0:
+            raise ValueError("Expected a one-dimensional vector.")
+        norm = float(np.linalg.norm(array))
+        if norm == 0.0:
+            raise ValueError("Expected a non-zero vector.")
+        return array / norm
+
+    @staticmethod
+    def _parse_vector(raw_value: str) -> np.ndarray:
+        return LiveRAGStore._normalize_vector(json.loads(raw_value))
+
+    @staticmethod
+    def _empty_to_none(value: str | None) -> str | None:
+        if value is None or value == "":
+            return None
+        return value
+
     @staticmethod
     def _utc_now() -> datetime:
         return datetime.now(timezone.utc)
 
     @staticmethod
     def _isoformat(value: datetime) -> str:
-        return value.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")

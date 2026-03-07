@@ -33,7 +33,11 @@ def post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def render_text(payload: dict[str, Any]) -> str:
-    lines = [f"query: {payload['query']}", f"hits: {len(payload['hits'])}"]
+    lines = [
+        f"query: {payload['query']}",
+        f"mode: {payload.get('mode', 'lexical')}",
+        f"hits: {len(payload['hits'])}",
+    ]
     for index, hit in enumerate(payload["hits"], start=1):
         message = hit["message"]
         lines.append(
@@ -60,8 +64,11 @@ def main() -> None:
     parser.add_argument("--db-path", default=str(DEFAULT_DB_PATH))
     parser.add_argument("--binary", default=str(DEFAULT_BINARY))
     parser.add_argument("--limit", type=int, default=8)
+    parser.add_argument("--mode", choices=("lexical", "semantic", "hybrid"), default="lexical")
+    parser.add_argument("--semantic-top-k", type=int, default=24)
     parser.add_argument("--chat-id", type=int)
     parser.add_argument("--speaker")
+    parser.add_argument("--since-days", type=float)
     parser.add_argument("--context-before", type=int, default=2)
     parser.add_argument("--context-after", type=int, default=2)
     parser.add_argument("--timeout", type=float, default=30.0)
@@ -83,9 +90,12 @@ def main() -> None:
         f"{args.base_url.rstrip('/')}/retrieve",
         {
             "query": query,
+            "mode": args.mode,
             "limit": args.limit,
+            "semantic_top_k": args.semantic_top_k,
             "chat_id": args.chat_id,
             "speaker": args.speaker,
+            "since_days": args.since_days,
             "context_before": args.context_before,
             "context_after": args.context_after,
         },

@@ -143,7 +143,7 @@ ensure_python_runtime() {
     run_logged "$PYTHON_BIN" -m venv "$VENV_PATH"
   fi
 
-  if [[ ! -f "$VENV_STAMP" ]] || [[ "$REQUIREMENTS_FILE" -nt "$VENV_STAMP" ]] || ! "$VENV_PYTHON" -c "import fastapi, uvicorn" >/dev/null 2>&1; then
+  if [[ ! -f "$VENV_STAMP" ]] || [[ "$REQUIREMENTS_FILE" -nt "$VENV_STAMP" ]] || ! "$VENV_PYTHON" -c "import fastapi, uvicorn, huggingface_hub, numpy" >/dev/null 2>&1; then
     run_logged "$VENV_PYTHON" -m pip install --upgrade pip
     run_logged "$VENV_PYTHON" -m pip install -r "$REQUIREMENTS_FILE"
     touch "$VENV_STAMP"

@@ -1,6 +1,6 @@
 # 이슈 003: Kakao Live RAG 시맨틱 검색 및 README 통합
 
-**상태**: 열림
+**상태**: 진행 중
 **생성일**: 2026-03-07
 
 ## 배경
@@ -14,13 +14,13 @@
 
 ## 완료 기준
 
-- [ ] `kakaocli-patched/README.md`가 현재 `kakaocli-patched/AGENTS.md`에 있는
+- [x] `kakaocli-patched/README.md`가 현재 `kakaocli-patched/AGENTS.md`에 있는
       repo-local 운영 안내를 직접 포함한다.
-- [ ] `kakaocli-patched/AGENTS.md`가 제거되고, 이를 전제로 하는 문서 참조가 남지
+- [x] `kakaocli-patched/AGENTS.md`가 제거되고, 이를 전제로 하는 문서 참조가 남지
       않는다.
-- [ ] 기존 Live RAG 파이프라인이 현재 lexical 동작을 깨지 않으면서 `lexical`,
+- [x] 기존 Live RAG 파이프라인이 현재 lexical 동작을 깨지 않으면서 `lexical`,
       `semantic`, `hybrid` 검색 모드를 지원한다.
-- [ ] 시맨틱 검색은 외부 임베딩 API 모델을 사용하되, 검색 상태는 저장소 런타임
+- [x] 시맨틱 검색은 외부 임베딩 API 모델을 사용하되, 검색 상태는 저장소 런타임
       데이터 디렉터리 아래 로컬에 유지된다.
 - [ ] 검색 파이프라인 변경 부분은 실행 가능한 검증 명령과 안정 출력 slice에 대한
       MD5 비교로 확인된다.
@@ -28,10 +28,25 @@
 ## 작업 목록
 
 - [ ] 1. `.agents/exceplan/` 아래에 이 작업용 영문/국문 ExecPlan 문서를 저장한다.
-- [ ] 2. `kakaocli-patched/AGENTS.md` 내용을 `kakaocli-patched/README.md`로 통합한다.
-- [ ] 3. 기존 `tools/live_rag` 파이프라인 위에 시맨틱 인덱싱과 검색을 추가한다.
+- [x] 2. `kakaocli-patched/AGENTS.md` 내용을 `kakaocli-patched/README.md`로 통합한다.
+- [x] 3. 기존 `tools/live_rag` 파이프라인 위에 시맨틱 인덱싱과 검색을 추가한다.
 - [ ] 4. 동작을 검증하고, 이슈/우회책 기록을 업데이트한 뒤, 요구된 한국어 커밋을 준비한다.
 
 ## 참고 사항
 
-<!-- 작업 진행 중 결정 사항, 발견 사항, 차단 사항을 여기에 기록하세요 -->
+- `kakaocli-patched/tools/live_rag/` 아래에 `embedding_client.py`,
+  `semantic_index.py`, `build_semantic_index.py`, `validate_semantic.py`를 추가해
+  semantic sidecar 구축 경로를 구현했다.
+- `app.py`, `query.py`, `store.py`를 확장해서 `/retrieve`와 CLI가 `lexical`,
+  `semantic`, `hybrid` 모드와 공통 `since_days` 필터를 처리하도록 바꿨다.
+- `requirements-live-rag.txt`, `bin/install-kakaocli`, `bin/query-kakao`를 함께
+  수정해 conda 개발 경로와 repo-local `.venv` wrapper 경로가 모두
+  `huggingface_hub`, `numpy`를 포함하도록 맞췄다.
+- 관리형 서비스를 재시작한 뒤 lexical smoke check는 통과했다. wrapper 응답은
+  기존 hit 집합을 유지하면서 top-level `"mode": "lexical"` 필드를 추가한다.
+- 현재 Mac의 Hugging Face cached login은 inference provider 호출 권한이 없어
+  `validate_semantic.py --use-temp-db`와 `build_semantic_index.py`가
+  `403 Forbidden`으로 실패한다. 두 스크립트는 이제 traceback 대신 JSON 오류를 출력한다.
+- `/messages?limit=200` MD5는 구현 중 live sync가 새 Kakao row를 계속 받아서
+  변경됐다. canonical endpoint의 스키마는 유지되지만, 안정적인 MD5 증명을 위해서는
+  조용한 데이터셋이나 고정된 스냅샷이 필요하다.

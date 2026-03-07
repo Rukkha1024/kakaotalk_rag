@@ -174,8 +174,6 @@ kakaocli sync --follow --interval 1                  # Poll every 1 second
 kakaocli sync --follow --webhook http://localhost:8080/kakao  # POST to webhook
 ```
 
-See [AGENTS.md](AGENTS.md) for AI agent integration instructions.
-
 ### Harvest / 수집
 
 ```bash
@@ -204,6 +202,54 @@ kakaocli login --clear                                # Remove credentials
 
 When you run `send`, `sync`, or any command that needs KakaoTalk, the tool automatically launches the app, detects the login screen, fills credentials, and waits for login to complete.
 
+### Credential Storage
+
+- Stored in macOS login Keychain under service `com.kakaocli.credentials`
+- Two items: `kakaotalk-email` and `kakaotalk-password`
+- Persists across reboots, encrypted by macOS, and available to the current macOS user
+- Uses the `security` CLI instead of `Security.framework` to avoid code-signing ACL issues
+
+To inspect or delete credentials manually:
+
+```bash
+security find-generic-password -s "com.kakaocli.credentials" -a "kakaotalk-email" -w
+security delete-generic-password -s "com.kakaocli.credentials" -a "kakaotalk-email"
+security delete-generic-password -s "com.kakaocli.credentials" -a "kakaotalk-password"
+```
+
+### Automatic Lifecycle / 자동 수명주기 관리
+
+You do **not** need to manually launch or log into KakaoTalk for `send`, `sync`, `harvest`, or the Live RAG wrapper. The tool handles:
+
+- launching KakaoTalk when it is not running,
+- detecting the login screen and filling stored credentials,
+- checking "Keep me logged in" so future launches are faster,
+- detecting the hidden menu-bar-only state,
+- continuing immediately when the app is already logged in.
+
+The first auto-login after a fresh install usually takes 5-10 seconds. Once "Keep me logged in" is set, later launches are near-instant.
+
+### App State Detection / 앱 상태 감지
+
+```bash
+kakaocli login --status
+```
+
+| State | Meaning |
+|-------|---------|
+| `loggedIn` | Ready to use |
+| `loginScreen` | Needs login and will auto-login if credentials exist |
+| `notRunning` | KakaoTalk is not running yet |
+| `launching` | App startup is still in progress |
+| `unknown` | Temporary transition state |
+
+### Known AX Quirks
+
+- `kAXWindowsAttribute` can return `AXApplication` elements instead of real windows.
+- When KakaoTalk is hidden in the menu bar, there may be zero real `AXWindow` elements.
+- The status bar menu is the most reliable login-state indicator.
+- Right after login, the window can disappear briefly during the transition.
+
 ## AI Integration / AI 연동
 
 kakaocli is designed to work with AI coding assistants and agents. Every read command outputs structured JSON, and the tool handles KakaoTalk's full lifecycle automatically (launch, login, window management).
@@ -218,6 +264,14 @@ For this patched repo, use these defaults first:
 # Evidence-backed KakaoTalk answers, summaries, and information requests
 ./bin/query-kakao --json --query-text "박다훈 업데이트"
 
+# Build semantic sidecar after authenticating with Hugging Face
+HF_TOKEN=hf_xxx conda run -n module python tools/live_rag/build_semantic_index.py --mode rebuild --limit 500
+
+# Query retrieval modes explicitly
+./bin/query-kakao --json --mode lexical --query-text "업데이트"
+./bin/query-kakao --json --mode semantic --query-text "회의가 연기된 내용"
+./bin/query-kakao --json --mode hybrid --query-text "박다훈이 미룬 일정"
+
 # Install, permissions, login, status, auth, and low-level diagnostics
 ./bin/kakaocli-local status
 ./bin/kakaocli-local auth
@@ -229,7 +283,48 @@ For this patched repo, use these defaults first:
 - Run `send`, `sync --follow`, and `harvest` only when the user explicitly asks or approves.
 - On this Mac, the Homebrew or `PATH` `kakaocli` may still point to the upstream build without the local `userId` cache fallback. Do not treat it as the default for this repo.
 
-See [AGENTS.md](AGENTS.md) for the full routing rules and local operational guidance.
+For semantic mode, authenticate with Hugging Face in one of these two ways before building or querying the semantic index:
+
+```bash
+export HF_TOKEN=hf_xxx
+```
+
+or
+
+```bash
+conda run -n module python -c "from huggingface_hub import login; login()"
+```
+
+If you do not pass `HF_TOKEN`, the embedding client will try the token cached by prior `hf auth login` or `huggingface_hub.login()`.
+
+### Live RAG Modes
+
+The local `/retrieve` endpoint and `./bin/query-kakao` now support three retrieval modes:
+
+- `lexical`: existing FTS and `LIKE` matching, best for exact names and phrases
+- `semantic`: embedding-based meaning search over the local semantic sidecar
+- `hybrid`: merges lexical and semantic ranks into one result list
+
+The semantic sidecar is built from the canonical `messages` table and stored under the repo runtime state in `.data/live_rag.sqlite3`. It never replaces or mutates the canonical Kakao message rows.
+
+Common commands:
+
+```bash
+# Incremental update from newly ingested rows
+conda run -n module python tools/live_rag/build_semantic_index.py --mode update
+
+# Full rebuild when the model/provider/chunking changes
+HF_TOKEN=hf_xxx conda run -n module python tools/live_rag/build_semantic_index.py --mode rebuild
+
+# Deterministic semantic validation with a temporary fixture database
+HF_TOKEN=hf_xxx conda run -n module python tools/live_rag/validate_semantic.py --use-temp-db
+```
+
+Useful query flags:
+
+- `--mode lexical|semantic|hybrid`
+- `--semantic-top-k N`
+- `--since-days DAYS`
 
 ### Claude Code (compatibility)
 
@@ -255,7 +350,7 @@ open ../.agents/skills/kakaocli/SKILL.md
 
 Claude Code in this workspace uses that single `.agents/skills/kakaocli` definition.
 
-This is a secondary integration path for editors that do not use this repo's `AGENTS.md` routing directly.
+This is a secondary integration path for editors that do not use the outer repo skill routing directly.
 
 ### Cursor / Windsurf / Other AI Editors
 
@@ -291,8 +386,6 @@ Each new message is delivered as a JSON object:
 ### OpenClaw
 
 This repo no longer carries a duplicated `skills/kakaocli/` mirror. If you need an OpenClaw-style registry entry for this workspace, point it at the canonical repo-level skill: [../.agents/skills/kakaocli/SKILL.md](../.agents/skills/kakaocli/SKILL.md).
-
-See [AGENTS.md](AGENTS.md) for detailed integration instructions including credential setup, lifecycle management, local Codex routing, and error handling.
 
 ## How It Works / 동작 원리
 

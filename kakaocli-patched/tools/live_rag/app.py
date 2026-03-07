@@ -15,8 +15,12 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 
 try:
+    from .embedding_client import ExternalEmbeddingClient
+    from .semantic_index import DEFAULT_SEMANTIC_TOP_K, reciprocal_rank_fuse
     from .store import LiveRAGStore
 except ImportError:
+    from embedding_client import ExternalEmbeddingClient
+    from semantic_index import DEFAULT_SEMANTIC_TOP_K, reciprocal_rank_fuse
     from store import LiveRAGStore
 
 
@@ -77,16 +81,61 @@ def create_app() -> FastAPI:
         query = str(payload.get("query", "")).strip()
         if not query:
             raise HTTPException(status_code=400, detail="`query` is required.")
+        mode = str(payload.get("mode", "lexical")).strip().lower()
+        if mode not in {"lexical", "semantic", "hybrid"}:
+            raise HTTPException(status_code=400, detail="`mode` must be lexical, semantic, or hybrid.")
 
-        results = app.state.store.retrieve(
-            query=query,
-            limit=int(payload.get("limit", 8)),
-            chat_id=payload.get("chat_id"),
-            speaker=payload.get("speaker"),
-            context_before=int(payload.get("context_before", 2)),
-            context_after=int(payload.get("context_after", 2)),
-        )
-        return {"query": query, "hits": results}
+        limit = int(payload.get("limit", 8))
+        context_before = int(payload.get("context_before", 2))
+        context_after = int(payload.get("context_after", 2))
+        semantic_top_k = int(payload.get("semantic_top_k", DEFAULT_SEMANTIC_TOP_K))
+        since_days_value = payload.get("since_days")
+        since_days = float(since_days_value) if since_days_value is not None else None
+
+        lexical_hits: list[dict[str, Any]] = []
+        semantic_hits: list[dict[str, Any]] = []
+        if mode in {"lexical", "hybrid"}:
+            lexical_hits = app.state.store.retrieve_lexical(
+                query=query,
+                limit=limit,
+                chat_id=payload.get("chat_id"),
+                speaker=payload.get("speaker"),
+                since_days=since_days,
+                context_before=context_before,
+                context_after=context_after,
+            )
+        if mode in {"semantic", "hybrid"}:
+            settings = app.state.store.get_semantic_settings()
+            if settings is None:
+                raise HTTPException(status_code=400, detail="Semantic index is not built yet.")
+            try:
+                client = ExternalEmbeddingClient(
+                    model=str(settings["embedding_model"]),
+                    provider=settings.get("embedding_provider"),
+                )
+                query_vector = client.embed_query(query)
+            except RuntimeError as error:
+                raise HTTPException(status_code=502, detail=str(error)) from error
+            semantic_hits = app.state.store.retrieve_semantic(
+                query_vector=query_vector,
+                limit=limit,
+                semantic_top_k=semantic_top_k,
+                chat_id=payload.get("chat_id"),
+                speaker=payload.get("speaker"),
+                since_days=since_days,
+                context_before=context_before,
+                context_after=context_after,
+                config_signature=str(settings["config_signature"]),
+            )
+
+        if mode == "lexical":
+            hits = lexical_hits
+        elif mode == "semantic":
+            hits = semantic_hits
+        else:
+            hits = reciprocal_rank_fuse(lexical_hits, semantic_hits, limit=limit)
+
+        return {"query": query, "mode": mode, "hits": hits}
 
     return app
 
