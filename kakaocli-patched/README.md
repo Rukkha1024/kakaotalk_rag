@@ -193,9 +193,32 @@ When you run `send`, `sync`, or any command that needs KakaoTalk, the tool autom
 
 kakaocli is designed to work with AI coding assistants and agents. Every read command outputs structured JSON, and the tool handles KakaoTalk's full lifecycle automatically (launch, login, window management).
 
-### Claude Code
+### Codex (local patched workflow)
 
-Add kakaocli as a skill in your project's `CLAUDE.md`:
+For this local patched repo on this Mac, use these defaults first:
+
+```bash
+export KAKAOCLI_BIN="/Users/alice/Documents/codex/kakaocli-patched/.build/release/kakaocli"
+
+# Evidence-backed KakaoTalk answers, summaries, and information requests
+conda run -n module python /Users/alice/Documents/codex/kakaocli-patched/tools/live_rag/query.py --json --query-text "박다훈 업데이트"
+
+# Install, permissions, login, status, auth, and low-level diagnostics
+$KAKAOCLI_BIN status
+$KAKAOCLI_BIN auth
+$KAKAOCLI_BIN login --status
+```
+
+- Prefer `query.py` for KakaoTalk information lookups, summaries, and evidence-backed answers.
+- Prefer `$KAKAOCLI_BIN` for installation, permissions, login, `status`, `auth`, and raw CLI diagnostics.
+- Run `send`, `sync --follow`, and `harvest` only when the user explicitly asks or approves.
+- On this Mac, the Homebrew or `PATH` `kakaocli` may still point to the upstream build without the local `userId` cache fallback. Do not treat it as the default.
+
+See [AGENTS.md](AGENTS.md) for the full routing rules and local operational guidance.
+
+### Claude Code (compatibility)
+
+If you still use project-level `CLAUDE.md` rules, add kakaocli as a compatibility path:
 
 ```markdown
 ## KakaoTalk Integration
@@ -217,6 +240,8 @@ cp skills/kakaocli/SKILL.md /path/to/your/project/.claude/skills/
 
 Claude Code can then read your KakaoTalk messages, search conversations, and send messages on your behalf.
 
+This is a secondary integration path for editors that do not use this repo's `AGENTS.md` routing directly.
+
 ### Cursor / Windsurf / Other AI Editors
 
 Add to your project rules or `.cursorrules`:
@@ -232,14 +257,14 @@ Always ask for confirmation before sending messages to other people.
 
 ### Webhooks & Real-time Agents
 
-For agents that need to react to incoming messages in real-time:
+For agents that need to react to incoming messages in real-time after an explicit automation decision:
 
 ```bash
 # Stream new messages as NDJSON (pipe to your agent)
-kakaocli sync --follow | your-agent-processor
+/Users/alice/Documents/codex/kakaocli-patched/.build/release/kakaocli sync --follow | your-agent-processor
 
 # Or POST to a webhook endpoint
-kakaocli sync --follow --webhook http://localhost:8080/kakao
+/Users/alice/Documents/codex/kakaocli-patched/.build/release/kakaocli sync --follow --webhook http://localhost:8080/kakao
 ```
 
 Each new message is delivered as a JSON object:
@@ -252,7 +277,7 @@ Each new message is delivered as a JSON object:
 
 A kakaocli [skill definition](skills/kakaocli/SKILL.md) is included for use with [OpenClaw](https://github.com/nichochar/open-claw) or similar skill registries.
 
-See [AGENTS.md](AGENTS.md) for detailed integration instructions including credential setup, lifecycle management, and error handling.
+See [AGENTS.md](AGENTS.md) for detailed integration instructions including credential setup, lifecycle management, local Codex routing, and error handling.
 
 ## How It Works / 동작 원리
 

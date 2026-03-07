@@ -5,9 +5,24 @@ Instructions for AI agents that want to read and send KakaoTalk messages.
 ## Prerequisites
 
 - macOS 14+ with KakaoTalk desktop app installed
-- `kakaocli` binary built and in PATH (or run via `swift run kakaocli`)
+- local patched binary built at `/Users/alice/Documents/codex/kakaocli-patched/.build/release/kakaocli`
 - System Settings > Privacy & Security: **Full Disk Access** + **Accessibility** granted to your terminal
 - KakaoTalk credentials stored (see First-Time Setup below)
+
+## Local Command Defaults
+
+For this repo on this Mac, prefer these entrypoints:
+
+```bash
+export KAKAOCLI_BIN="/Users/alice/Documents/codex/kakaocli-patched/.build/release/kakaocli"
+```
+
+- Information requests, summaries, and evidence-backed KakaoTalk answers: `conda run -n module python /Users/alice/Documents/codex/kakaocli-patched/tools/live_rag/query.py --json --query-text "..."`
+- Installation, permissions, login, `status`, `auth`, and low-level diagnostics: `$KAKAOCLI_BIN ...`
+- `send`, `sync --follow`, and `harvest`: run only when the user explicitly asks or approves.
+- The Homebrew or `PATH` `kakaocli` on this Mac may still point to the upstream build without the local `userId` cache fallback. Do not treat it as the default.
+
+Unless otherwise noted, the `kakaocli` examples below refer to `$KAKAOCLI_BIN`.
 
 ## First-Time Setup
 
@@ -168,7 +183,7 @@ Returns: `{"status":"ready","max_log_id":12345}` — useful for getting the curr
 Use the local Live RAG query entrypoint when an agent needs evidence-backed KakaoTalk answers:
 
 ```bash
-conda run -n module python tools/live_rag/query.py --json --query-text "박다훈 업데이트"
+conda run -n module python /Users/alice/Documents/codex/kakaocli-patched/tools/live_rag/query.py --json --query-text "박다훈 업데이트"
 ```
 
 This entrypoint:
@@ -180,32 +195,41 @@ This entrypoint:
 To manage the background service directly:
 
 ```bash
-conda run -n module python tools/live_rag/service_manager.py ensure
-conda run -n module python tools/live_rag/service_manager.py status
+conda run -n module python /Users/alice/Documents/codex/kakaocli-patched/tools/live_rag/service_manager.py ensure
+conda run -n module python /Users/alice/Documents/codex/kakaocli-patched/tools/live_rag/service_manager.py status
 ```
+
+Routing rule:
+- Use `query.py` first for KakaoTalk information lookups, summaries, or evidence-backed answers.
+- Use `$KAKAOCLI_BIN` first for installation, permissions, login, `status`, `auth`, and low-level debugging.
+- Keep `send`, `sync --follow`, and `harvest` behind explicit user approval.
 
 ## Agent Integration Pattern
 
-Typical agent loop:
+For user-facing KakaoTalk questions, call the Live RAG query path first. The raw CLI loop below is for explicit automation flows after that routing decision.
+
+Typical raw agent loop:
 
 ```python
 import subprocess, json
 
+KAKAOCLI_BIN = "/Users/alice/Documents/codex/kakaocli-patched/.build/release/kakaocli"
+
 # 1. Check for new messages
-proc = subprocess.run(["kakaocli", "messages", "--since", "5m", "--json"],
+proc = subprocess.run([KAKAOCLI_BIN, "messages", "--since", "5m", "--json"],
                       capture_output=True, text=True)
 messages = json.loads(proc.stdout)
 
 # 2. Process and respond
 for msg in messages:
     if not msg["is_from_me"] and needs_response(msg):
-        subprocess.run(["kakaocli", "send", msg["chat_name"], response_text])
+        subprocess.run([KAKAOCLI_BIN, "send", msg["chat_name"], response_text])
 ```
 
 Or use sync mode for real-time:
 
 ```bash
-kakaocli sync --follow | while read -r line; do
+$KAKAOCLI_BIN sync --follow | while read -r line; do
   echo "$line" | jq -r '.text' | process_message
 done
 ```
