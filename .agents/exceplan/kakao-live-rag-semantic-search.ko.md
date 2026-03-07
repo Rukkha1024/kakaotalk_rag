@@ -121,7 +121,7 @@
 
 ## 작업 계획
 
-다음 세션의 첫 번째 마일스톤은 semantic 경로를 “fixture와 subset에서는 증명됨” 상태에서 “실제 데이터베이스 전체에서도 실사용 가능” 상태로 끌어올리는 것이다. 먼저 현재 fixture 검증이 여전히 통과하는지 다시 확인하고, `.data/live_rag.sqlite3` 안의 semantic sidecar 통계를 읽어 현재 상태를 사실 기준으로 파악한다. 그 다음 현행 Qwen 설정으로 실데이터 전체 rebuild를 시도한다. rebuild가 적절한 시간 안에 끝나면 semantic count와 config signature를 기록하고 바로 operator-facing 질의 검증으로 넘어간다. 반대로 너무 오래 걸리면 막연히 다시 시작하지 말고, `build_semantic_index.py`에 resume 가능한 batching과 진행률 출력부터 추가해 긴 rebuild를 이어서 돌릴 수 있게 만든다.
+이 문서 앞부분에서 설명한 semantic 경로, README 통합, retrieval mode 연결은 이미 현재 워크트리에 구현되어 있다. 따라서 다음 세션은 처음부터 다시 만드는 구현 세션이 아니다. 이미 들어간 semantic 경로가 계속 건강한지 검증하고, 운영적으로 아직 약한 부분만 좁게 보완하고, 최종 operator-facing 동작을 기록하는 세션이다. 첫 번째 마일스톤은 semantic 경로를 “fixture와 subset에서는 증명됨” 상태에서 “실제 데이터베이스 전체에서도 실사용 가능” 상태로 끌어올리는 것이다. 먼저 현재 fixture 검증이 여전히 통과하는지 다시 확인하고, `.data/live_rag.sqlite3` 안의 semantic sidecar 통계를 읽어 현재 상태를 사실 기준으로 파악한다. 그 다음 현행 Qwen 설정으로 실데이터 전체 rebuild를 시도한다. rebuild가 적절한 시간 안에 끝나면 semantic count와 config signature를 기록하고 바로 operator-facing 질의 검증으로 넘어간다. 반대로 너무 오래 걸리면 막연히 다시 시작하지 말고, `build_semantic_index.py`에 resume 가능한 batching과 진행률 출력부터 추가해 긴 rebuild를 이어서 돌릴 수 있게 만든다.
 
 두 번째 마일스톤은 operator-facing 기본 검색 동작을 결정하는 것이다. 현재 코드는 `lexical`, `semantic`, `hybrid`를 모두 지원하지만, 다음 세션에서는 “교수님이 나한테 지시하신 게 뭐지?” 같은 열린 기억형 질문에 대해 `query-kakao`가 무엇을 기본 동작으로 삼을지 명시적으로 정해야 한다. 선택지는 세 가지뿐이다. lexical을 기본값으로 유지하고 mode 전환을 명시적으로 요구하거나, 기본값을 hybrid로 바꾸거나, 정확한 문구 검색은 lexical로 유지하되 열린 기억형 질문에만 hybrid/semantic fallback을 태우는 좁은 규칙을 추가하는 방식이다. 이 결정은 취향이 아니라 실제 질의 결과를 근거로 내려야 한다.
 
@@ -233,25 +233,25 @@
 
 ## 인터페이스와 의존성
 
-기존 `kakaocli-patched/tools/live_rag` 모듈 경계를 유지한다.
+기존 `kakaocli-patched/tools/live_rag` 모듈 경계를 유지한다. 아래 인터페이스들은 `Progress`에 기록된 완료 작업의 일부로 이미 저장소 안에 존재한다. 따라서 다음 세션에서는 이들을 새로 다시 구현할 대상으로 보지 말고, 남은 작업을 진행하는 동안 유지하고 검증해야 할 현재 계약으로 다룬다. 정말로 미완료된 운영 과제를 해결하는 데 필요할 때만 좁게 확장한다.
 
-`kakaocli-patched/tools/live_rag/embedding_client.py`에는 다음과 같은 안정적인 인터페이스를 가진 작은 클라이언트 래퍼를 정의한다.
+`kakaocli-patched/tools/live_rag/embedding_client.py`에는 이미 다음과 같은 안정적인 인터페이스를 가진 작은 클라이언트 래퍼가 있다.
 
     class ExternalEmbeddingClient:
         def embed_documents(self, texts: list[str]) -> list[list[float]]: ...
         def embed_query(self, text: str) -> list[float]: ...
 
-이 클라이언트는 `HF_TOKEN` 또는 캐시된 로그인 상태의 Hugging Face 인증을 사용해야 하며, 기본 모델은 `Qwen/Qwen3-Embedding-8B`로 하고 선택적 provider override를 받아야 한다.
+이 클라이언트는 이미 `HF_TOKEN` 또는 캐시된 로그인 상태의 Hugging Face 인증을 사용하고, 기본 모델은 `Qwen/Qwen3-Embedding-8B`이며, 선택적 provider override도 받는다. 다음 세션에서는 rebuild/default-mode 후속 작업을 진행하는 동안 이 동작이 계속 유지되는지 검증해야 한다.
 
-`kakaocli-patched/tools/live_rag/store.py`에는 다음 형태의 semantic-sidecar persistence 메서드를 추가한다.
+`kakaocli-patched/tools/live_rag/store.py`에는 이미 다음 형태의 semantic-sidecar persistence 메서드가 들어가 있다.
 
     def iter_messages_for_embedding(self, after_log_id: int | None, limit: int | None) -> list[dict[str, Any]]: ...
     def upsert_semantic_chunks(self, chunks: list[dict[str, Any]]) -> dict[str, int]: ...
     def semantic_search(self, query_vector: list[float], limit: int, chat_id: int | None, speaker: str | None) -> list[dict[str, Any]]: ...
 
-`kakaocli-patched/tools/live_rag/semantic_index.py`에는 chunk 생성과 벡터 scoring helper를 정의한다. chunk 규칙은 단순하고 명시적으로 둔다. 짧은 Kakao 메시지는 메시지 1개를 chunk 1개로 사용하고, 긴 텍스트는 문자 수 기준으로 overlap을 두고 분할하되 `log_id`, `chat_id`, `sender`, `timestamp`, 원문 텍스트를 메타데이터에 유지한다.
+`kakaocli-patched/tools/live_rag/semantic_index.py`에는 이미 chunk 생성과 벡터 scoring helper가 있다. 현재 chunk 규칙은 단순하고 명시적이다. 짧은 Kakao 메시지는 메시지 1개를 chunk 1개로 사용하고, 긴 텍스트는 문자 수 기준으로 overlap을 두고 분할하되 `log_id`, `chat_id`, `sender`, `timestamp`, 원문 텍스트를 메타데이터에 유지한다. 남은 실데이터 검증에서 구체적인 검색 문제가 드러날 때만 이 규칙을 바꾼다.
 
-`kakaocli-patched/tools/live_rag/app.py`에서는 `/retrieve`가 다음 형태를 받도록 확장한다.
+`kakaocli-patched/tools/live_rag/app.py`에서는 `/retrieve`가 이미 다음 형태를 받는다.
 
     {
       "query": "...",
@@ -265,24 +265,24 @@
       "context_after": 2
     }
 
-`kakaocli-patched/tools/live_rag/query.py`에는 다음 CLI 플래그를 추가한다.
+`kakaocli-patched/tools/live_rag/query.py`에는 이미 다음 CLI 플래그가 있고, 서비스 요청 스키마와 계속 맞아야 한다.
 
     --mode lexical|semantic|hybrid
     --semantic-top-k N
     --since-days DAYS
 
-`kakaocli-patched/tools/live_rag/build_semantic_index.py`는 다음 옵션을 받아야 한다.
+`kakaocli-patched/tools/live_rag/build_semantic_index.py`는 이미 다음 옵션을 받는다.
 
     --mode rebuild|update
     --limit N
     --embedding-model MODEL_ID
     --embedding-provider PROVIDER
 
-`kakaocli-patched/tools/live_rag/validate_semantic.py`는 임시 fixture 데이터베이스를 만들고, `LiveRAGStore.ingest_messages`를 통해 고정 메시지 세트를 넣고, semantic sidecar를 만든 뒤, 우회 표현 질의가 기대한 fixture `log_id`를 반환하는지 단정하는 진입점을 제공해야 한다. 다음과 같은 안정적인 인터페이스면 충분하다.
+`kakaocli-patched/tools/live_rag/validate_semantic.py`는 이미 임시 fixture 데이터베이스를 만들고, `LiveRAGStore.ingest_messages`를 통해 고정 메시지 세트를 넣고, semantic sidecar를 만든 뒤, 우회 표현 질의가 기대한 fixture `log_id`를 반환하는지 단정하는 진입점을 제공한다. 다음과 같은 안정적인 인터페이스는 계속 유지되어야 한다.
 
     conda run -n module python tools/live_rag/validate_semantic.py --use-temp-db
 
-`kakaocli-patched/README.md`의 최종 내용은 현재 `kakaocli-patched/AGENTS.md`에만 분리되어 있는 로컬 운영 가이드를 직접 포함해야 한다. 특히 다음 항목이 포함되어야 한다.
+`kakaocli-patched/README.md`의 최종 내용은 현재 `kakaocli-patched/AGENTS.md`에만 분리되어 있던 로컬 운영 가이드를 이미 직접 포함하고 있다. 특히 다음 항목이 들어가 있어야 한다.
 - credential 저장 동작
 - 자동 로그인 및 lifecycle 동작
 - 앱 상태 판별과 AX 관련 주의사항
@@ -290,7 +290,7 @@
 - troubleshooting 안내
 - 전송 및 자동화 safety rules
 
-`kakaocli-patched/requirements-live-rag.txt`에는 꼭 필요한 최소 패키지만 추가한다. 현재 예상 집합은 다음과 같다.
+`kakaocli-patched/requirements-live-rag.txt`에는 꼭 필요한 최소 패키지만 유지한다. 현재 예상 집합은 다음과 같다.
 
     fastapi
     uvicorn
@@ -306,3 +306,5 @@ LangChain은 넣지 않고, 외부 벡터 데이터베이스도 넣지 않으며
 변경 메모, 2026-03-07: 리뷰 이후 이 계획은 fixture 데이터베이스 기반의 재현 가능한 semantic 검증, 명시적인 before/after MD5 캡처, `kakaocli-patched/` 범위로 한정한 AGENTS 퇴역 검사, 그리고 현재 워크스페이스에 실제로 존재하는 issue/progress 경로를 가리키는 기록 절차를 추가하도록 보강되었다.
 
 변경 메모, 2026-03-07 (handoff 갱신): 이제 `Qwen/Qwen3-Embedding-8B` 기반 semantic 가능성은 입증되었고, routed provider의 `(1, 4096)` 응답 shape도 파서가 처리한다. 제한된 실데이터 rebuild와 최근 연구실 채팅 subset semantic probe도 성공했다. 다음 세션은 전체 실데이터 coverage, operator-facing 기본 검색 동작, 교수님 지시사항 질문 흐름, 그리고 고정 데이터셋 MD5 검증에 집중해야 한다.
+
+변경 메모, 2026-03-07 (상태 명확화 갱신): 남은 섹션들이 이제 현재 워크트리에 이미 존재하는 구현과, 아직 남아 있는 검증·운영 후속 작업을 구분해서 설명한다. 이미 들어간 semantic 인터페이스는 다시 새로 만들 대상이 아니라, 유지하고 검증해야 할 현재 계약으로 적었다.

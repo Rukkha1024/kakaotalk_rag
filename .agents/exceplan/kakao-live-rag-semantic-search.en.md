@@ -121,7 +121,7 @@ The user-facing query wrapper is `/Users/alice/Documents/codex/query-kakao`, whi
 
 ## Plan of Work
 
-The first milestone for the next session is to turn the semantic path from “proven on fixtures and subsets” into “useful on the real database.” Start by confirming the current fixture validation still passes and inspecting the current semantic-sidecar stats in `.data/live_rag.sqlite3`. Then attempt a full rebuild against the real message store with the current Qwen configuration. If the rebuild completes in a reasonable time, record the resulting semantic counts and move directly to operator-facing query validation. If it does not, pause and make `build_semantic_index.py` more operationally usable by adding resumable batching and visible progress so a long rebuild can be resumed instead of restarted blindly.
+The semantic path, README consolidation, and retrieval-mode wiring described earlier in this document already exist in the working tree. The next session is therefore not a greenfield implementation pass. Its job is to verify that the existing semantic path remains healthy, extend only the parts that are still operationally weak, and record the final operator-facing behavior. The first milestone is to turn the semantic path from “proven on fixtures and subsets” into “useful on the real database.” Start by confirming the current fixture validation still passes and inspecting the current semantic-sidecar stats in `.data/live_rag.sqlite3`. Then attempt a full rebuild against the real message store with the current Qwen configuration. If the rebuild completes in a reasonable time, record the resulting semantic counts and move directly to operator-facing query validation. If it does not, pause and make `build_semantic_index.py` more operationally usable by adding resumable batching and visible progress so a long rebuild can be resumed instead of restarted blindly.
 
 The second milestone is to decide the operator-facing retrieval default. The code already supports `lexical`, `semantic`, and `hybrid`, but the next session needs an explicit answer to what `query-kakao` should do for open-ended memory questions such as “교수님이 나한테 지시하신 게 뭐지?” There are only three sane choices: keep lexical as the default and require an explicit mode switch, change the default to hybrid, or add a small fallback rule that uses hybrid/semantic for broad memory questions while preserving lexical for exact phrase lookups. The decision should be made with real query evidence, not by taste.
 
@@ -233,25 +233,25 @@ The implementation should leave behind a small set of inspectable artifacts unde
 
 ## Interfaces and Dependencies
 
-Use the existing `kakaocli-patched/tools/live_rag` module boundary.
+Use the existing `kakaocli-patched/tools/live_rag` module boundary. The interfaces below are already present in the repository as part of the completed implementation recorded in `Progress`. Treat them as existing contracts to preserve and verify while doing the remaining next-session work. Only extend them if the unfinished operational tasks in this plan truly require it.
 
-In `kakaocli-patched/tools/live_rag/embedding_client.py`, define a small client wrapper with a stable interface such as:
+In `kakaocli-patched/tools/live_rag/embedding_client.py`, keep the existing small client wrapper with the stable interface:
 
     class ExternalEmbeddingClient:
         def embed_documents(self, texts: list[str]) -> list[list[float]]: ...
         def embed_query(self, text: str) -> list[float]: ...
 
-This client must use Hugging Face authentication from `HF_TOKEN` or cached login state, default the model to `Qwen/Qwen3-Embedding-8B`, and accept an optional provider override.
+This client already uses Hugging Face authentication from `HF_TOKEN` or cached login state, defaults the model to `Qwen/Qwen3-Embedding-8B`, and accepts an optional provider override. The next session should verify that this behavior still holds while the rebuild/default-mode follow-up work proceeds.
 
-In `kakaocli-patched/tools/live_rag/store.py`, add semantic-sidecar persistence with methods shaped like:
+In `kakaocli-patched/tools/live_rag/store.py`, preserve the existing semantic-sidecar persistence methods shaped like:
 
     def iter_messages_for_embedding(self, after_log_id: int | None, limit: int | None) -> list[dict[str, Any]]: ...
     def upsert_semantic_chunks(self, chunks: list[dict[str, Any]]) -> dict[str, int]: ...
     def semantic_search(self, query_vector: list[float], limit: int, chat_id: int | None, speaker: str | None) -> list[dict[str, Any]]: ...
 
-In `kakaocli-patched/tools/live_rag/semantic_index.py`, define chunk construction and vector scoring helpers. Keep the chunking rule simple and explicit: for short Kakao messages, use one message as one chunk; for longer text, split by character count with overlap and retain `log_id`, `chat_id`, `sender`, `timestamp`, and source text in metadata.
+In `kakaocli-patched/tools/live_rag/semantic_index.py`, keep the existing chunk construction and vector scoring helpers. The current chunking rule is simple and explicit: for short Kakao messages, use one message as one chunk; for longer text, split by character count with overlap and retain `log_id`, `chat_id`, `sender`, `timestamp`, and source text in metadata. Change this only if the remaining real-data validation shows a concrete retrieval problem.
 
-In `kakaocli-patched/tools/live_rag/app.py`, extend `/retrieve` so it accepts:
+In `kakaocli-patched/tools/live_rag/app.py`, keep `/retrieve` aligned with the existing request shape:
 
     {
       "query": "...",
@@ -265,24 +265,24 @@ In `kakaocli-patched/tools/live_rag/app.py`, extend `/retrieve` so it accepts:
       "context_after": 2
     }
 
-In `kakaocli-patched/tools/live_rag/query.py`, add CLI flags:
+In `kakaocli-patched/tools/live_rag/query.py`, keep the existing CLI flags aligned with the service:
 
     --mode lexical|semantic|hybrid
     --semantic-top-k N
     --since-days DAYS
 
-In `kakaocli-patched/tools/live_rag/build_semantic_index.py`, accept:
+In `kakaocli-patched/tools/live_rag/build_semantic_index.py`, keep the existing options:
 
     --mode rebuild|update
     --limit N
     --embedding-model MODEL_ID
     --embedding-provider PROVIDER
 
-In `kakaocli-patched/tools/live_rag/validate_semantic.py`, define a validation entrypoint that can create a temporary fixture database, seed a fixed message set through `LiveRAGStore.ingest_messages`, build the semantic sidecar, and assert that a paraphrased semantic query returns the expected fixture `log_id`. A stable interface such as the following is sufficient:
+In `kakaocli-patched/tools/live_rag/validate_semantic.py`, keep the existing validation entrypoint that can create a temporary fixture database, seed a fixed message set through `LiveRAGStore.ingest_messages`, build the semantic sidecar, and assert that a paraphrased semantic query returns the expected fixture `log_id`. A stable interface such as the following must continue to work:
 
     conda run -n module python tools/live_rag/validate_semantic.py --use-temp-db
 
-In `kakaocli-patched/README.md`, the final content must directly include the local operational guidance currently isolated in `kakaocli-patched/AGENTS.md`, especially:
+In `kakaocli-patched/README.md`, the final content already directly includes the local operational guidance that used to be isolated in `kakaocli-patched/AGENTS.md`, especially:
 - credential storage behavior,
 - automatic login and lifecycle behavior,
 - app state detection and AX caveats,
@@ -290,7 +290,7 @@ In `kakaocli-patched/README.md`, the final content must directly include the loc
 - troubleshooting guidance,
 - safety rules for sending and automation.
 
-In `kakaocli-patched/requirements-live-rag.txt`, add only the smallest required packages. The current expected set is:
+In `kakaocli-patched/requirements-live-rag.txt`, keep only the smallest required package set. The current expected set is:
 
     fastapi
     uvicorn
@@ -306,3 +306,5 @@ This revised ExecPlan narrows the earlier generic “HF embeddings plus FAISS ov
 Revision note, 2026-03-07: after review, this plan was tightened so semantic validation is reproducible on a fixture database, the MD5 flow captures both before and after snapshots explicitly, AGENTS-retirement checks only search the patched repo, and bookkeeping now targets concrete issue/progress files that exist in this workspace.
 
 Revision note, 2026-03-07 (handoff update): semantic feasibility is now proven with `Qwen/Qwen3-Embedding-8B`, the routed provider returns a `(1, 4096)` payload that the parser now accepts, a limited real-data rebuild has succeeded, and a recent lab-chat subset has already produced useful semantic hits. The next session should focus on full real-data coverage, operator-facing default retrieval behavior, the professor-instruction question flow, and MD5 verification on a frozen dataset.
+
+Revision note, 2026-03-07 (state-clarification update): the remaining sections now distinguish between implementation that already exists in the working tree and the smaller set of verification or operational follow-up tasks that are still open. Existing semantic interfaces are described as contracts to preserve and verify, not as greenfield additions to re-implement.
