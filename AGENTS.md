@@ -22,8 +22,8 @@
 - For KakaoTalk information requests, first run `./query-kakao --json --query-text "<request>"` from the repo root.
 - The Live RAG query entrypoint must ensure the launchd-backed webhook server and sync follower are running before answering.
 - Ground KakaoTalk answers in retrieved chat evidence whenever the query returns hits.
-- For semantic embedding, semantic index, build, rebuild, or validation work, read `.agents/embedding-rules.md` first and follow it as the repository embedding policy.
-- Implement and verify embedding changes against `.agents/embedding-rules.md`; do not invent alternate embedding inclusion rules unless the user explicitly changes that document.
+- Read `.agents/embedding-rules.md` before semantic embedding, indexing, build, rebuild, or validation work.
+- Follow `.agents/embedding-rules.md` as the repository embedding rule unless the user changes it.
 
 
 ## Architecture Rule
