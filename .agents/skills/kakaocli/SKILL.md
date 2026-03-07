@@ -99,6 +99,12 @@ Use only when the user explicitly requests them:
 
 Respond in Korean unless the user asks otherwise.
 
+For KakaoTalk information answers:
+- do not default to a raw recent-message dump,
+- state the dominant topic, repeated entity, or likely intended point first when the evidence makes it clear,
+- support that point with 2-4 concrete message snippets in time order or importance order,
+- if the user asks "what did X say?" and one topic is clearly repeated, mention that topic before listing recent messages.
+
 Always report:
 - exact commands run,
 - what succeeded,
