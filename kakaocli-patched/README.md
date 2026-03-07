@@ -311,6 +311,17 @@ sidecar is unavailable, `hybrid` falls back to lexical results and returns
 
 The semantic sidecar is built from the canonical `messages` table and stored under the repo runtime state in `.data/live_rag.sqlite3`. It never replaces or mutates the canonical Kakao message rows.
 
+Before every semantic `build` or `update`, the builder refreshes chat metadata via
+`kakaocli chats --json` and stores it in the local Live RAG database. Semantic
+embedding candidates are then filtered with the current hard rule: only normal text
+messages from chats with `member_count <= 30` are eligible. If chat metadata refresh
+fails or the refresh does not cover the candidate message rows, the build aborts
+before mutating the semantic sidecar.
+
+This means large group chats stay available for lexical search, but they are excluded
+from semantic and hybrid semantic-sidecar hits. If the embedding rule changes, rebuild
+the semantic sidecar instead of relying on incremental update state.
+
 Common commands:
 
 ```bash
@@ -319,6 +330,9 @@ conda run -n module python tools/live_rag/build_semantic_index.py --mode update
 
 # Full rebuild when the model/provider/chunking changes
 HF_TOKEN=hf_xxx conda run -n module python tools/live_rag/build_semantic_index.py --mode rebuild --batch-size 20 --progress
+
+# Override the repo-local kakaocli binary or the member-count cutoff if needed
+HF_TOKEN=hf_xxx conda run -n module python tools/live_rag/build_semantic_index.py --mode rebuild --binary .build/release/kakaocli --max-member-count 30
 
 # Resume a long rebuild without clearing the sidecar again
 HF_TOKEN=hf_xxx conda run -n module python tools/live_rag/build_semantic_index.py --mode update --batch-size 20 --progress

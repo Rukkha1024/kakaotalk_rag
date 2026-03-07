@@ -60,6 +60,18 @@ CREATE TABLE IF NOT EXISTS live_rag_state (
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
+CREATE TABLE IF NOT EXISTS chat_metadata (
+    chat_id INTEGER PRIMARY KEY,
+    chat_name TEXT,
+    member_count INTEGER NOT NULL,
+    chat_type TEXT,
+    raw_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_metadata_member_count
+    ON chat_metadata (member_count, chat_type);
+
 CREATE TABLE IF NOT EXISTS semantic_chunks (
     chunk_id TEXT PRIMARY KEY,
     log_id INTEGER NOT NULL,
@@ -94,6 +106,7 @@ SEMANTIC_STATE_KEYS = (
     "semantic_embedding_provider",
     "semantic_chunk_chars",
     "semantic_chunk_overlap",
+    "semantic_max_member_count",
     "semantic_last_indexed_log_id",
 )
 
@@ -265,8 +278,101 @@ class LiveRAGStore:
             stats["semantic_config_signature"] = self._get_state(connection, "semantic_config_signature")
             stats["semantic_embedding_model"] = self._get_state(connection, "semantic_embedding_model")
             stats["semantic_embedding_provider"] = self._get_state(connection, "semantic_embedding_provider")
+            stats["semantic_max_member_count"] = self._get_int_state(connection, "semantic_max_member_count")
             stats["semantic_last_indexed_log_id"] = self._get_int_state(connection, "semantic_last_indexed_log_id")
+            metadata_stats = connection.execute(
+                """
+                SELECT
+                    COUNT(*) AS chat_metadata_count,
+                    SUM(CASE WHEN member_count > 30 THEN 1 ELSE 0 END) AS excluded_chat_count
+                FROM chat_metadata
+                """
+            ).fetchone()
+            if metadata_stats is not None:
+                stats.update(dict(metadata_stats))
             return stats
+
+    def upsert_chat_metadata(self, chats: list[dict[str, Any]]) -> dict[str, int]:
+        if not chats:
+            return {"chat_count": 0}
+
+        normalized = [self._normalize_chat_metadata(chat) for chat in chats]
+        with self._connect() as connection:
+            for chat in normalized:
+                connection.execute(
+                    """
+                    INSERT INTO chat_metadata (
+                        chat_id,
+                        chat_name,
+                        member_count,
+                        chat_type,
+                        raw_json,
+                        updated_at
+                    ) VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+                    ON CONFLICT(chat_id) DO UPDATE SET
+                        chat_name = excluded.chat_name,
+                        member_count = excluded.member_count,
+                        chat_type = excluded.chat_type,
+                        raw_json = excluded.raw_json,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        chat["chat_id"],
+                        chat.get("chat_name"),
+                        chat["member_count"],
+                        chat.get("chat_type"),
+                        json.dumps(chat["raw_json"], ensure_ascii=False, sort_keys=True),
+                    ),
+                )
+            connection.commit()
+        return {"chat_count": len(normalized)}
+
+    def excluded_chat_ids_for_embedding(self, *, max_member_count: int) -> list[int]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT chat_id
+                FROM chat_metadata
+                WHERE member_count > ?
+                ORDER BY chat_id ASC
+                """,
+                (max_member_count,),
+            ).fetchall()
+        return [int(row["chat_id"]) for row in rows]
+
+    def count_embedding_messages_missing_chat_metadata(
+        self,
+        *,
+        after_log_id: int | None,
+        limit: int | None,
+    ) -> int:
+        clauses = ["m.message_type = 1", "COALESCE(TRIM(m.text), '') != ''", "c.chat_id IS NULL"]
+        params: list[Any] = []
+        if after_log_id is not None:
+            clauses.append("m.log_id > ?")
+            params.append(after_log_id)
+        limit_sql = ""
+        if limit is not None:
+            limit_sql = "LIMIT ?"
+            params.append(limit)
+
+        with self._connect() as connection:
+            row = connection.execute(
+                f"""
+                SELECT COUNT(*) AS missing_count
+                FROM (
+                    SELECT m.log_id
+                    FROM messages AS m
+                    LEFT JOIN chat_metadata AS c
+                        ON c.chat_id = m.chat_id
+                    WHERE {' AND '.join(clauses)}
+                    ORDER BY m.log_id ASC
+                    {limit_sql}
+                )
+                """,
+                params,
+            ).fetchone()
+        return 0 if row is None else int(row["missing_count"])
 
     def list_messages(
         self,
@@ -334,11 +440,17 @@ class LiveRAGStore:
         self,
         after_log_id: int | None,
         limit: int | None,
+        *,
+        max_member_count: int,
     ) -> list[dict[str, Any]]:
-        clauses = ["message_type = 1", "COALESCE(TRIM(text), '') != ''"]
-        params: list[Any] = []
+        clauses = [
+            "m.message_type = 1",
+            "COALESCE(TRIM(m.text), '') != ''",
+            "c.member_count <= ?",
+        ]
+        params: list[Any] = [max_member_count]
         if after_log_id is not None:
-            clauses.append("log_id > ?")
+            clauses.append("m.log_id > ?")
             params.append(after_log_id)
         limit_sql = ""
         if limit is not None:
@@ -348,10 +460,12 @@ class LiveRAGStore:
         with self._connect() as connection:
             rows = connection.execute(
                 f"""
-                SELECT *
-                FROM messages
+                SELECT m.*
+                FROM messages AS m
+                INNER JOIN chat_metadata AS c
+                    ON c.chat_id = m.chat_id
                 WHERE {' AND '.join(clauses)}
-                ORDER BY log_id ASC
+                ORDER BY m.log_id ASC
                 {limit_sql}
                 """,
                 params,
@@ -434,6 +548,7 @@ class LiveRAGStore:
                 ),
                 "chunk_chars": self._get_int_state(connection, "semantic_chunk_chars"),
                 "chunk_overlap": self._get_int_state(connection, "semantic_chunk_overlap"),
+                "max_member_count": self._get_int_state(connection, "semantic_max_member_count"),
                 "last_indexed_log_id": self._get_int_state(connection, "semantic_last_indexed_log_id"),
             }
 
@@ -786,6 +901,15 @@ class LiveRAGStore:
             "message_type": int(message.get("message_type", -1)),
             "timestamp": str(message["timestamp"]),
             "is_from_me": bool(message.get("is_from_me", False)),
+        }
+
+    def _normalize_chat_metadata(self, chat: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "chat_id": int(chat["id"]),
+            "chat_name": str(chat.get("display_name") or "").strip() or None,
+            "member_count": int(chat.get("member_count", 0)),
+            "chat_type": str(chat.get("type") or "").strip() or None,
+            "raw_json": chat,
         }
 
     def _serialize_row(self, row: sqlite3.Row) -> dict[str, Any]:

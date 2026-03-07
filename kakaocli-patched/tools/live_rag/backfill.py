@@ -9,6 +9,11 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+try:
+    from .store import LiveRAGStore
+except ImportError:
+    from store import LiveRAGStore
+
 
 TYPE_MAP = {
     "text": 1,
@@ -21,6 +26,7 @@ TYPE_MAP = {
     "system": 0,
     "unknown": -1,
 }
+DEFAULT_DB_PATH = Path(__file__).resolve().parents[2] / ".data" / "live_rag.sqlite3"
 
 
 def run_json(command: list[str]) -> Any:
@@ -99,6 +105,7 @@ def main() -> None:
         "--binary",
         default=str(Path(__file__).resolve().parents[2] / ".build" / "release" / "kakaocli"),
     )
+    parser.add_argument("--db-path", default=str(DEFAULT_DB_PATH))
     parser.add_argument("--since", default="7d")
     parser.add_argument("--chat")
     parser.add_argument("--chat-id", type=int)
@@ -114,6 +121,9 @@ def main() -> None:
     )
     if not targets:
         raise SystemExit("No target chats found for backfill.")
+
+    store = LiveRAGStore(Path(args.db_path))
+    store.upsert_chat_metadata(targets)
 
     total_messages = 0
     total_inserted = 0

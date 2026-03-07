@@ -61,6 +61,15 @@ documentation should be consolidated so the patched repo has one clear usage gui
 - Semantic embedding input now skips non-message/system feed rows and prefixes
   chat/sender/direction metadata before embedding, which improves open-ended
   memory questions against real Kakao history.
+- Semantic builds now refresh `chat_metadata` from `kakaocli chats --json`
+  before indexing, store that metadata in the local Live RAG database, and
+  fail closed if the metadata refresh is incomplete for candidate rows.
+- The current embedding rule excludes chats with `member_count > 30` from the
+  semantic sidecar. Those chats still remain available to lexical retrieval,
+  but they do not contribute semantic chunks or hybrid semantic-sidecar hits.
+- The semantic config signature now includes the embedding-rule version plus
+  `max_member_count=30`, so rule changes force a rebuild instead of silently
+  reusing incompatible incremental state.
 - The operator-facing default is now `hybrid`. When the semantic sidecar is
   unavailable, the service falls back to lexical results and includes
   `requested_mode` plus `fallback_reason` in JSON output.
@@ -68,6 +77,8 @@ documentation should be consolidated so the patched repo has one clear usage gui
   `tools/live_rag/query.py --json --query-text "교수님이 나한테 지시하신 게 뭐지?"`
   and `./bin/query-kakao --json --query-text "교수님이 나한테 지시하신 게 뭐지?"`
   returned grounded professor-related hits instead of system feed rows.
+- The fixture semantic validator now seeds chat metadata explicitly so the
+  new fail-closed embedding rule is covered by automated validation as well.
 - MD5 over a quiescent `/messages` slice is now stable. Using
   `chat_id=421983255615844&limit=200`, the before/after snapshots matched with
   hash `9fdd299ebe49192b9a803f2f06ec9abb`.

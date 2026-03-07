@@ -60,6 +60,14 @@ FIXTURE_MESSAGES = [
 
 FIXTURE_QUERY = "회의가 연기됐다는 내용"
 EXPECTED_LOG_ID = 101
+FIXTURE_CHAT_METADATA = [
+    {
+        "id": 9001,
+        "display_name": "프로젝트 공지",
+        "member_count": 3,
+        "type": "group",
+    }
+]
 
 
 def run_validation(db_path: Path, *, embedding_model: str, embedding_provider: str | None) -> dict[str, object]:
@@ -73,6 +81,8 @@ def run_validation(db_path: Path, *, embedding_model: str, embedding_provider: s
         limit=None,
         embedding_model=embedding_model,
         embedding_provider=embedding_provider,
+        binary=None,
+        chat_metadata=FIXTURE_CHAT_METADATA,
     )
     settings = store.get_semantic_settings()
     if settings is None:

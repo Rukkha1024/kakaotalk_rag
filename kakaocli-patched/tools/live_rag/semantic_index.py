@@ -18,6 +18,8 @@ DEFAULT_CHUNK_OVERLAP = 80
 DEFAULT_EMBED_BATCH_SIZE = 16
 DEFAULT_FUSION_K = 60
 SEMANTIC_TEXT_TEMPLATE_VERSION = "v2"
+EMBEDDING_RULE_VERSION = "v1-member-count-cap"
+DEFAULT_MAX_MEMBER_COUNT = 30
 
 
 def build_config_signature(
@@ -26,6 +28,7 @@ def build_config_signature(
     embedding_provider: str | None,
     chunk_chars: int,
     chunk_overlap: int,
+    max_member_count: int,
 ) -> str:
     payload = {
         "embedding_model": embedding_model,
@@ -33,6 +36,8 @@ def build_config_signature(
         "chunk_chars": chunk_chars,
         "chunk_overlap": chunk_overlap,
         "semantic_text_template": SEMANTIC_TEXT_TEMPLATE_VERSION,
+        "embedding_rule_version": EMBEDDING_RULE_VERSION,
+        "max_member_count": max_member_count,
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 

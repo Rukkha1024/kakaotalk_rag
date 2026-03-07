@@ -56,6 +56,15 @@
 - semantic 임베딩 입력은 이제 일반 텍스트 메시지만 대상으로 삼고,
   임베딩 전에 대화방/보낸 사람/방향 메타데이터를 함께 붙여서 열린 기억형 질문의
   실데이터 검색 품질을 높였다.
+- semantic build는 이제 인덱싱 전에 `kakaocli chats --json`으로
+  `chat_metadata`를 새로 받아 로컬 Live RAG DB에 저장하고, candidate row에 대한
+  metadata가 불완전하면 semantic sidecar를 건드리기 전에 fail-closed로 중단한다.
+- 현재 임베딩 규칙은 `member_count > 30` 채팅방을 semantic sidecar에서 제외한다.
+  이런 대형 그룹채팅은 lexical 검색에서는 계속 보이지만, semantic chunk나 hybrid의
+  semantic-sidecar hit에는 들어가지 않는다.
+- semantic config signature에는 이제 embedding-rule version과
+  `max_member_count=30`이 포함되므로, 규칙이 바뀌면 호환되지 않는 update 대신
+  rebuild를 강제한다.
 - operator-facing 기본값은 이제 `hybrid`다. semantic sidecar를 아직 만들지
   않았거나 사용할 수 없을 때는 lexical 결과로 자동 fallback하고,
   JSON 응답에 `requested_mode`와 `fallback_reason`을 남긴다.
@@ -63,6 +72,8 @@
   `tools/live_rag/query.py --json --query-text "교수님이 나한테 지시하신 게 뭐지?"`
   와 `./bin/query-kakao --json --query-text "교수님이 나한테 지시하신 게 뭐지?"`
   모두 교수 관련 대화에 근거한 hit를 반환했다.
+- fixture semantic validator도 이제 chat metadata를 함께 넣어 새 fail-closed
+  임베딩 규칙을 자동 검증 경로에서 함께 확인한다.
 - 조용한 `/messages` slice에 대한 MD5도 안정적으로 맞았다.
   `chat_id=421983255615844&limit=200` 기준 before/after 해시는
   `9fdd299ebe49192b9a803f2f06ec9abb`로 동일했다.

@@ -26,6 +26,7 @@
 - [x] (2026-03-07) semantic 인덱싱 대상을 실제 텍스트 메시지로 좁히고, 임베딩 전에 대화방/보낸 사람/방향 메타데이터를 붙였다. 그 결과 교수님 지시사항 질문이 `semantic`/기본 `hybrid` 모드에서 교수 관련 대화 hit를 반환함을 확인했다.
 - [x] (2026-03-07) operator-facing 기본 검색 동작을 `hybrid`로 정했고, semantic 상태를 사용할 수 없을 때 lexical fallback으로 안전하게 내려가도록 연결했다. JSON 응답에는 fallback 메타데이터를 남긴다.
 - [x] (2026-03-07) 조용한 chat slice(`chat_id=421983255615844&limit=200`)에서 `/messages` MD5를 다시 확인했고, before/after 해시가 `9fdd299ebe49192b9a803f2f06ec9abb`로 일치했다.
+- [x] (2026-03-07) `member_count > 30` 채팅방을 semantic 임베딩에서 제외하는 hard rule을 추가하고, `chat_metadata`를 로컬에 저장하며, metadata refresh가 불완전할 때 semantic build를 fail-closed로 중단하도록 만들었다.
 
 ## 놀라운 점과 발견 사항
 
@@ -64,6 +65,9 @@
 
 - Observation: system/feed row는 열린 기억형 질문에서 강한 semantic 노이즈였다.
   Evidence: 필터링 전에는 교수님 지시사항 질문의 상위 hit에 `feedType` JSON과 사진 placeholder가 섞였지만, 실제 텍스트 메시지만 인덱싱하고 메타데이터를 함께 임베딩한 뒤에는 같은 질문이 교수 관련 대화를 반환했다.
+
+- Observation: `member_count`는 canonical Live RAG `messages` row에 저장되어 있지 않다.
+  Evidence: 이 값은 `kakaocli chats --json`에서만 바로 얻을 수 있었기 때문에, semantic 필터링을 위해 별도의 `chat_metadata` 테이블과 build/update 전 refresh 단계가 필요했다.
 
 ## 결정 기록
 
@@ -107,13 +111,17 @@
   Rationale: fixture 데이터베이스가 semantic correctness를 증명해 주고, 최근 채팅 subset probe는 긴 전역 rebuild를 기다리지 않고도 사용자 체감 가치를 먼저 검증할 수 있다.
   Date/Author: 2026-03-07 / Codex
 
+- Decision: `member_count > 30`을 저장소 차원의 semantic 임베딩 hard exclusion rule로 둔다.
+  Rationale: 대형 그룹채팅은 semantic candidate 노이즈가 크고, semantic recall의 체감 가치는 direct/small-group 대화에서 더 높으며, 사용자가 이 기준을 상시 저장소 규칙으로 요청했다.
+  Date/Author: 2026-03-07 / Codex
+
 - Decision: operator-facing 기본값은 `hybrid`로 두고, semantic 상태를 사용할 수 없을 때만 lexical로 fallback한다.
   Rationale: 실제 질의 결과를 보면 열린 기억형 질문은 semantic recall의 이점을 크게 받았고, fallback을 lexical로 두면 sidecar가 아직 없거나 임베딩 호출이 실패하는 상황에서도 안전한 기본 동작을 유지할 수 있다.
   Date/Author: 2026-03-07 / Codex
 
 ## 결과와 회고
 
-구현은 이제 들어가 있고, semantic 경로도 더 이상 이론 단계가 아니다. 패치 저장소는 `kakaocli-patched/README.md` 하나로 운영 가이드를 통합했고, 중복 repo-local `AGENTS.md` 파일은 제거했다. Live RAG 경로에는 semantic sidecar 빌드/갱신 스크립트와 서비스/CLI의 `lexical`, `semantic`, `hybrid` 검색 모드가 추가됐다. 관리형 서비스를 재시작한 뒤 lexical 동작은 여전히 wrapper를 통해 정상 동작했고, fixture 기반 semantic 검증도 `Qwen/Qwen3-Embedding-8B`로 통과한다. 이제 builder는 배치마다 체크포인트를 남기므로 긴 rebuild를 `--mode update`로 이어서 돌릴 수 있고, non-message row를 걸러내고 메타데이터를 함께 임베딩한 뒤에는 교수님 지시사항 질문이 direct CLI와 `./bin/query-kakao` 모두에서 교수 관련 대화 hit를 반환했다. 따라서 operator-facing 기본값은 `hybrid`로 확정됐고, 조용한 `/messages` slice에 대한 MD5 비교도 동일 해시로 닫혔다. 남은 선택적 후속 작업은 필요할 때 resumable rebuild를 계속 돌려 전체 coverage를 높이는 일뿐이다.
+구현은 이제 들어가 있고, semantic 경로도 더 이상 이론 단계가 아니다. 패치 저장소는 `kakaocli-patched/README.md` 하나로 운영 가이드를 통합했고, 중복 repo-local `AGENTS.md` 파일은 제거했다. Live RAG 경로에는 semantic sidecar 빌드/갱신 스크립트와 서비스/CLI의 `lexical`, `semantic`, `hybrid` 검색 모드가 추가됐다. 관리형 서비스를 재시작한 뒤 lexical 동작은 여전히 wrapper를 통해 정상 동작했고, fixture 기반 semantic 검증도 `Qwen/Qwen3-Embedding-8B`로 통과한다. 이제 builder는 배치마다 체크포인트를 남기므로 긴 rebuild를 `--mode update`로 이어서 돌릴 수 있고, semantic build는 매번 `kakaocli chats --json`으로 `chat_metadata`를 갱신한 뒤 `member_count > 30` 채팅방을 semantic sidecar에서 제외한다. semantic config signature에는 embedding-rule version과 `max_member_count=30`도 함께 기록되므로, 규칙이 바뀌면 호환되지 않는 update가 아니라 rebuild가 필요하다는 점이 명시된다. 조용한 `/messages` slice에 대한 MD5 비교도 동일 해시로 닫혔다.
 
 ## 맥락과 구조 설명
 
@@ -285,6 +293,8 @@
     --limit N
     --embedding-model MODEL_ID
     --embedding-provider PROVIDER
+    --binary PATH
+    --max-member-count N
 
 `kakaocli-patched/tools/live_rag/validate_semantic.py`는 이미 임시 fixture 데이터베이스를 만들고, `LiveRAGStore.ingest_messages`를 통해 고정 메시지 세트를 넣고, semantic sidecar를 만든 뒤, 우회 표현 질의가 기대한 fixture `log_id`를 반환하는지 단정하는 진입점을 제공한다. 다음과 같은 안정적인 인터페이스는 계속 유지되어야 한다.
 
@@ -316,3 +326,5 @@ LangChain은 넣지 않고, 외부 벡터 데이터베이스도 넣지 않으며
 변경 메모, 2026-03-07 (handoff 갱신): 이제 `Qwen/Qwen3-Embedding-8B` 기반 semantic 가능성은 입증되었고, routed provider의 `(1, 4096)` 응답 shape도 파서가 처리한다. 제한된 실데이터 rebuild와 최근 연구실 채팅 subset semantic probe도 성공했다. 다음 세션은 전체 실데이터 coverage, operator-facing 기본 검색 동작, 교수님 지시사항 질문 흐름, 그리고 고정 데이터셋 MD5 검증에 집중해야 한다.
 
 변경 메모, 2026-03-07 (상태 명확화 갱신): 남은 섹션들이 이제 현재 워크트리에 이미 존재하는 구현과, 아직 남아 있는 검증·운영 후속 작업을 구분해서 설명한다. 이미 들어간 semantic 인터페이스는 다시 새로 만들 대상이 아니라, 유지하고 검증해야 할 현재 계약으로 적었다.
+
+변경 메모, 2026-03-07 (embedding rule 갱신): semantic 인덱싱은 이제 `kakaocli chats --json`에서 가져온 로컬 `chat_metadata` refresh에 의존하고, `member_count > 30` 채팅방을 제외하며, 그 규칙을 semantic config signature에 기록해 rebuild 요구 조건을 명시한다.
