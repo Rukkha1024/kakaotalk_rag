@@ -1,0 +1,6 @@
+interface:
+  display_name: "kakaocli"
+  short_description: "Clone or copy the patched repo and install kakaocli on macOS."
+  default_prompt: "Use $kakaocli to clone or locate my patched repo, run the repo-local installer, and verify KakaoTalk access on this Mac."
+policy:
+  allow_implicit_invocation: true

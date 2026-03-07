@@ -10,7 +10,7 @@
 # Codebase Rule
 
 - Do not restore or roll back files/code that you did not modify yourself. Never attempt to "fix" or revert changes in files unrelated to your current task, including using `git checkout`.
-- Use `polars` then `pandas` library. 
+- Use `polars` then `pandas` library.
 - Leverage Parallel Agent Execution: use multiple agents to handle different parts of the task concurrently. Proactively launch multiple independent tasks (search, read, validation) simultaneously to reduce turnaround time.
 - use UTF-8 with BOM (`utf-8-sig`) by default.
 - Unless instructed otherwise, completely replace old logic for bug fixes, but ask the user whether to retain existing logic when adding new features.
@@ -18,7 +18,7 @@
 - Use `$progress-md-workflow` when the user asks to create or update a timestamped progress markdown note or work log.
 - Use `$readme-update-only` skill when the user asks to revise, refresh, reorganize, or maintain README content, or when the user explicitly types `$readme-update-only`. Rather than explaining the code itself, write for those who may not know how to code. Focus on execution commands and the overall workflow of the project.
 - Python Files: Write a docstring of 7 lines or fewer explaining the core function and logic. Keep it concise so that anyone opening the file can immediately understand its purpose.
-- Use $kakaocli-safe-ops for KakaoTalk tasks on this Mac. For non-Kakao tasks, do not use kakaocli or its skill. Never send messages to other people without my explicit confirmation.
+- Use `$kakaocli` for KakaoTalk tasks on this Mac. For non-Kakao tasks, do not use kakaocli or its skill. Never send messages to other people without my explicit confirmation.
 - For KakaoTalk information requests, first run `./query-kakao --json --query-text "<request>"` from the repo root.
 - The Live RAG query entrypoint must ensure the launchd-backed webhook server and sync follower are running before answering.
 - Ground KakaoTalk answers in retrieved chat evidence whenever the query returns hits.
@@ -48,7 +48,7 @@ Follow the approved ExecPlan. Proceed through milestones autonomously without pr
 
 
 ----
-# Codebase andrej-karpathy Rules 
+# Codebase andrej-karpathy Rules
 
 **Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
 
@@ -107,4 +107,3 @@ For multi-step tasks, state a brief plan:
 ```
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
-

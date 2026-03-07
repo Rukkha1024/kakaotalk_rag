@@ -1,85 +1,123 @@
 ---
 name: kakaocli
-description: Send and receive KakaoTalk messages via CLI
-version: 0.5.0
-requires:
-  binaries:
-    - kakaocli
-  platform: darwin
-tags:
-  - messaging
-  - kakaotalk
-  - korea
+description: Install, verify, and safely use the patched kakaocli workflow from a GitHub URL or copied repo on macOS. Use when Codex needs to clone or locate the repo, run the repo-local wrappers (`install-kakaocli`, `kakaocli-local`, `query-kakao`), troubleshoot KakaoTalk permissions or login, or answer KakaoTalk questions from local evidence without defaulting to Homebrew or PATH kakaocli.
 ---
 
-# KakaoTalk CLI Skill
+# kakaocli
 
-Read and send KakaoTalk messages from the command line. Requires macOS with KakaoTalk desktop app installed. Auto-launches and auto-logs in when credentials are stored.
+## Overview
 
-## Setup (Required First Time)
+Use this skill as the single source of truth for setting up the patched
+`kakaocli` repo on another Mac. Do not rely on other skills or repo AGENTS files
+to complete install, verification, or read-only KakaoTalk access.
 
-If you are inside this patched repo, bootstrap it first:
+## Repo Discovery
+
+Find the repo before doing anything else.
+
+1. If the current directory has `./install-kakaocli`, treat it as the repo root.
+2. Else if the current directory has `./kakaocli-patched/bin/install-kakaocli`,
+   treat the current directory as the copied outer repo root.
+3. Else if the user gave a GitHub URL, clone it and then move into the cloned repo.
+4. Else ask the user for the repo path or GitHub URL.
+
+Use fast checks:
+
+```bash
+test -x ./install-kakaocli
+test -x ./kakaocli-patched/bin/install-kakaocli
+git clone <repo-url>
+```
+
+## Canonical Commands
+
+Prefer the repo-root wrappers whenever they exist:
+
+```bash
+./install-kakaocli
+./kakaocli-local auth
+./query-kakao --json --query-text "업데이트"
+```
+
+If only `kakaocli-patched/` is available, use:
 
 ```bash
 ./bin/install-kakaocli
+./bin/kakaocli-local auth
+./bin/query-kakao --json --query-text "업데이트"
 ```
+
+Do not default to Homebrew or `PATH` `kakaocli` while these repo-local wrappers
+exist.
+
+## Install Workflow
+
+Run the smallest path that gets the repo ready:
+
+1. From the repo root, run `./install-kakaocli`.
+2. Let the installer handle `sqlcipher`, the repo-local `.venv`, and the patched
+   release build.
+3. If the repo is unavailable and the user only wants upstream `kakaocli`, explain
+   that it may miss the local `userId` cache fallback and can fail `auth`.
+
+Fresh clone flow:
 
 ```bash
-# Store credentials for auto-login
-./bin/kakaocli-local login --email user@example.com --password yourpassword
+git clone <repo-url>
+cd <repo-dir>
+./install-kakaocli
 ```
 
-## Available Commands
+## Verification
 
-### Check Status
-```bash
-kakaocli login --status
-```
+Run verification in this order:
 
-### List Chats
-```bash
-kakaocli chats --json
-```
+1. `./kakaocli-local auth`
+2. `./kakaocli-local login --status`
+3. `./query-kakao --json --query-text "<request>"`
 
-### Read Messages
-```bash
-kakaocli messages --chat "Name" --since 1h --json
-```
+Interpretation:
 
-### Send Message
-```bash
-kakaocli send "Name" "Your message here"
-```
+- Treat `auth` success as the main read-path check.
+- Treat `login --status` timeout as non-fatal if `auth` succeeded.
+- Treat empty `query-kakao` hits as a valid query result, not an install failure.
 
-### Send to Self-Chat (Testing)
-```bash
-kakaocli send x --me "Test message"
-```
+## Manual Blockers
 
-### Watch for New Messages
-```bash
-kakaocli sync --follow
-```
+Stop and report the exact manual step when setup is blocked:
 
-### Search Messages
-```bash
-kakaocli search "keyword" --json
-```
+- Install `KakaoTalk.app` if it is missing.
+- Grant `Full Disk Access` to the terminal:
+  `System Settings > Privacy & Security > Full Disk Access`
+- Grant `Accessibility` only before `send`, `harvest`, or `inspect`:
+  `System Settings > Privacy & Security > Accessibility`
+- If credentials are missing and the user approves storing them, run:
+  `./kakaocli-local login --email <email> --password <password>`
+- KakaoTalk allows one Mac login per account.
 
-### Harvest Chat Names & History
-```bash
-# Capture display names for all chats
-kakaocli harvest
+## Safe Routing
 
-# Full harvest with scroll + history loading
-kakaocli harvest --scroll --top 20
-```
+Use the commands below by default:
 
-## Usage Guidelines
+- Information lookups and summaries: `./query-kakao --json --query-text "..."`
+- Diagnostics and raw reads: `./kakaocli-local status|auth|chats|messages|search|query`
+- Install and bootstrap: `./install-kakaocli`
 
-- Always confirm before sending messages to others
-- Use `--me` flag and `--dry-run` for testing
-- Rate limit: max 1 message per 2 seconds
-- Don't send messages between 11 PM and 7 AM unless urgent
-- KakaoTalk is auto-launched and auto-logged-in when credentials are stored
-- First-time setup requires `kakaocli login --email ... --password ...`
+Do not run these during setup unless the user explicitly asks:
+
+- `send`
+- `sync --follow`
+- `harvest`
+
+Never send a message to another person without explicit confirmation.
+
+## Reporting
+
+Respond in Korean unless the user asks otherwise.
+
+Always report:
+
+- exact commands run
+- what succeeded
+- what failed
+- the next manual step if blocked
