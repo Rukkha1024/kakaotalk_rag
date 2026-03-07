@@ -1,9 +1,10 @@
-"""Helpers for semantic chunking and rank fusion."""
+"""Helpers for semantic chunking, filtering, and rank fusion."""
 
 from __future__ import annotations
 
 import hashlib
 import json
+import re
 from itertools import islice
 from typing import Any, Iterable
 
@@ -16,6 +17,7 @@ DEFAULT_CHUNK_CHARS = 400
 DEFAULT_CHUNK_OVERLAP = 80
 DEFAULT_EMBED_BATCH_SIZE = 16
 DEFAULT_FUSION_K = 60
+SEMANTIC_TEXT_TEMPLATE_VERSION = "v2"
 
 
 def build_config_signature(
@@ -30,8 +32,26 @@ def build_config_signature(
         "embedding_provider": embedding_provider or "",
         "chunk_chars": chunk_chars,
         "chunk_overlap": chunk_overlap,
+        "semantic_text_template": SEMANTIC_TEXT_TEMPLATE_VERSION,
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def is_semantic_message(message: dict[str, Any]) -> bool:
+    if int(message.get("message_type") or 0) != 1:
+        return False
+
+    text = str(message.get("text") or "").strip()
+    if not text:
+        return False
+    if text.startswith("{") and text.endswith("}"):
+        return False
+
+    meaningful_tokens = re.findall(r"[0-9A-Za-z가-힣]+", text)
+    if not meaningful_tokens:
+        return False
+
+    return sum(len(token) for token in meaningful_tokens) >= 2
 
 
 def chunk_message(
@@ -43,18 +63,19 @@ def chunk_message(
     chunk_chars: int = DEFAULT_CHUNK_CHARS,
     chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
 ) -> list[dict[str, Any]]:
-    text = str(message.get("text") or "").strip()
-    if not text:
+    if not is_semantic_message(message):
         return []
 
+    text = str(message.get("text") or "").strip()
     source_signature = hashlib.sha256(
         f"{message['log_id']}:{message.get('timestamp')}:{text}".encode("utf-8")
     ).hexdigest()
     chunks = _split_text(text, chunk_chars=chunk_chars, chunk_overlap=chunk_overlap)
     records: list[dict[str, Any]] = []
     for chunk_index, chunk_text in enumerate(chunks):
+        semantic_text = _build_semantic_text(message, chunk_text)
         chunk_id = hashlib.sha256(
-            f"{config_signature}:{message['log_id']}:{chunk_index}:{chunk_text}".encode("utf-8")
+            f"{config_signature}:{message['log_id']}:{chunk_index}:{semantic_text}".encode("utf-8")
         ).hexdigest()
         records.append(
             {
@@ -65,7 +86,7 @@ def chunk_message(
                 "sender": message.get("sender"),
                 "timestamp": str(message["timestamp"]),
                 "chunk_index": chunk_index,
-                "chunk_text": chunk_text,
+                "chunk_text": semantic_text,
                 "embedding_model": embedding_model,
                 "embedding_provider": embedding_provider,
                 "config_signature": config_signature,
@@ -148,3 +169,20 @@ def _split_text(text: str, *, chunk_chars: int, chunk_overlap: int) -> list[str]
             break
         start += step
     return chunks
+
+
+def _build_semantic_text(message: dict[str, Any], chunk_text: str) -> str:
+    parts = []
+
+    chat_name = str(message.get("chat_name") or "").strip()
+    if chat_name:
+        parts.append(f"대화방: {chat_name}")
+
+    sender = str(message.get("sender") or "").strip()
+    if sender:
+        parts.append(f"보낸 사람: {sender}")
+
+    direction = "내가 받은 메시지" if not bool(message.get("is_from_me")) else "내가 보낸 메시지"
+    parts.append(f"방향: {direction}")
+    parts.append(f"내용: {chunk_text}")
+    return "\n".join(parts)

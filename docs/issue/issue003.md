@@ -1,6 +1,6 @@
 # Issue 003: Semantic search for Kakao Live RAG and README consolidation
 
-**Status**: In Progress
+**Status**: Done
 **Created**: 2026-03-07
 
 ## Background
@@ -22,16 +22,16 @@ documentation should be consolidated so the patched repo has one clear usage gui
       retrieval modes without breaking current lexical behavior.
 - [x] Semantic retrieval uses an external embedding API model while keeping local
       retrieval state under the repo runtime data directory.
-- [ ] The work is validated with runnable commands and MD5 comparison for stable
+- [x] The work is validated with runnable commands and MD5 comparison for stable
       output slices where the retrieval pipeline changed.
 
 ## Tasks
 
-- [ ] 1. Save bilingual ExecPlan documents for the work under `.agents/exceplan/`.
+- [x] 1. Save bilingual ExecPlan documents for the work under `.agents/exceplan/`.
 - [x] 2. Consolidate `kakaocli-patched/AGENTS.md` into `kakaocli-patched/README.md`.
 - [x] 3. Add semantic indexing and retrieval on top of the existing `tools/live_rag`
          pipeline.
-- [ ] 4. Validate the behavior, update issue/workaround records, and prepare the
+- [x] 4. Validate the behavior, update issue/workaround records, and prepare the
          required Korean commit.
 
 ## Notes
@@ -55,3 +55,19 @@ documentation should be consolidated so the patched repo has one clear usage gui
   sync follower ingested newer live Kakao rows during the implementation window.
   The canonical endpoint still returns the same schema, but a quiet or frozen dataset
   is needed for a stable MD5 proof.
+- The semantic builder now checkpoints after each batch and can resume with
+  `--mode update --batch-size N --progress`, so a long rebuild no longer has to
+  restart from zero after interruption.
+- Semantic embedding input now skips non-message/system feed rows and prefixes
+  chat/sender/direction metadata before embedding, which improves open-ended
+  memory questions against real Kakao history.
+- The operator-facing default is now `hybrid`. When the semantic sidecar is
+  unavailable, the service falls back to lexical results and includes
+  `requested_mode` plus `fallback_reason` in JSON output.
+- After rebuilding the sidecar with the new chunk format, both
+  `tools/live_rag/query.py --json --query-text "교수님이 나한테 지시하신 게 뭐지?"`
+  and `./bin/query-kakao --json --query-text "교수님이 나한테 지시하신 게 뭐지?"`
+  returned grounded professor-related hits instead of system feed rows.
+- MD5 over a quiescent `/messages` slice is now stable. Using
+  `chat_id=421983255615844&limit=200`, the before/after snapshots matched with
+  hash `9fdd299ebe49192b9a803f2f06ec9abb`.

@@ -305,6 +305,10 @@ The local `/retrieve` endpoint and `./bin/query-kakao` now support three retriev
 - `semantic`: embedding-based meaning search over the local semantic sidecar
 - `hybrid`: merges lexical and semantic ranks into one result list
 
+If you omit `--mode`, the operator-facing default is now `hybrid`. When the semantic
+sidecar is unavailable, `hybrid` falls back to lexical results and returns
+`requested_mode` plus `fallback_reason` in JSON output so the downgrade is explicit.
+
 The semantic sidecar is built from the canonical `messages` table and stored under the repo runtime state in `.data/live_rag.sqlite3`. It never replaces or mutates the canonical Kakao message rows.
 
 Common commands:
@@ -314,7 +318,10 @@ Common commands:
 conda run -n module python tools/live_rag/build_semantic_index.py --mode update
 
 # Full rebuild when the model/provider/chunking changes
-HF_TOKEN=hf_xxx conda run -n module python tools/live_rag/build_semantic_index.py --mode rebuild
+HF_TOKEN=hf_xxx conda run -n module python tools/live_rag/build_semantic_index.py --mode rebuild --batch-size 20 --progress
+
+# Resume a long rebuild without clearing the sidecar again
+HF_TOKEN=hf_xxx conda run -n module python tools/live_rag/build_semantic_index.py --mode update --batch-size 20 --progress
 
 # Deterministic semantic validation with a temporary fixture database
 HF_TOKEN=hf_xxx conda run -n module python tools/live_rag/validate_semantic.py --use-temp-db

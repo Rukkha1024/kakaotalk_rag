@@ -22,9 +22,10 @@
 - [x] (2026-03-07) `Qwen/Qwen3-Embedding-8B` 응답이 `(1, 4096)` 형태로 올 때도 처리되도록 파서를 수정했다. 이전에는 이 payload가 비지원 형식으로 취급됐다.
 - [x] (2026-03-07) 제한된 실데이터 semantic rebuild가 성공함을 확인했다. `tools/live_rag/build_semantic_index.py --mode rebuild --limit 20`이 완료되어 `.data/live_rag.sqlite3`에 sidecar 상태를 남겼다.
 - [x] (2026-03-07) 최근 연구실 관련 채팅 subset을 임베딩해 “최근 연구실 사람들 간의 대화 주제가 뭐지?” 질문에 대해 의미 기반 hit를 반환하는 targeted semantic probe를 수행했다.
-- [ ] 다음 세션 과제: 실사용에 충분한 전체 실데이터 semantic 인덱스를 끝까지 빌드하거나, 오래 걸리는 rebuild를 신뢰하고 이어서 돌릴 수 있게 builder에 resume/progress 기능을 넣어야 한다.
-- [ ] 다음 세션 과제: “교수님이 나한테 지시하신 게 뭐지?” 같은 질문에 대해 operator-facing 기본 검색 동작을 `lexical`, `semantic`, `hybrid` 중 무엇으로 둘지 결정하고 연결해야 한다.
-- [ ] 다음 세션 과제: `/messages` MD5 비교를 고정되거나 조용한 데이터 slice에서 다시 수행해야 한다. 이전 전후 비교는 구현 중 live ingestion이 계속 진행되어 drift가 섞였다.
+- [x] (2026-03-07) 배치 체크포인트와 진행률 출력을 추가했다. `build_semantic_index.py --mode update --limit 20 --batch-size 20 --progress`가 rebuild 체크포인트부터 이어서 실행되며 기존 chunk를 지우지 않고 `semantic_last_indexed_log_id`를 전진시켰다.
+- [x] (2026-03-07) semantic 인덱싱 대상을 실제 텍스트 메시지로 좁히고, 임베딩 전에 대화방/보낸 사람/방향 메타데이터를 붙였다. 그 결과 교수님 지시사항 질문이 `semantic`/기본 `hybrid` 모드에서 교수 관련 대화 hit를 반환함을 확인했다.
+- [x] (2026-03-07) operator-facing 기본 검색 동작을 `hybrid`로 정했고, semantic 상태를 사용할 수 없을 때 lexical fallback으로 안전하게 내려가도록 연결했다. JSON 응답에는 fallback 메타데이터를 남긴다.
+- [x] (2026-03-07) 조용한 chat slice(`chat_id=421983255615844&limit=200`)에서 `/messages` MD5를 다시 확인했고, before/after 해시가 `9fdd299ebe49192b9a803f2f06ec9abb`로 일치했다.
 
 ## 놀라운 점과 발견 사항
 
@@ -49,8 +50,8 @@
 - Observation: 이 Mac의 현재 Hugging Face cached login은 존재하지만 임베딩용 inference provider 호출 권한이 없다.
   Evidence: `tools/live_rag/validate_semantic.py --use-temp-db`와 `tools/live_rag/build_semantic_index.py`가 `--embedding-provider hf-inference`를 주어도 `router.huggingface.co`에서 `403 Forbidden`을 반환했다.
 
-- Observation: `/messages?limit=200` MD5가 전후 스냅샷에서 달라진 이유는 구현 중에도 live ingestion이 계속 진행됐기 때문이다.
-  Evidence: 두 export 모두 200개 항목을 유지했지만, 가장 최신/가장 오래된 `log_id`가 바뀌어 응답 스키마 회귀가 아니라 수집 드리프트임을 보여 줬다.
+- Observation: 전역 `/messages?limit=200` MD5는 구현 중 live ingestion 때문에 흔들렸지만, 조용한 chat 범위 slice는 안정적이었다.
+  Evidence: 전역 export는 가장 최신/가장 오래된 `log_id`가 계속 바뀌었지만, `chat_id=421983255615844&limit=200`는 before/after 해시가 `9fdd299ebe49192b9a803f2f06ec9abb`로 일치했다.
 
 - Observation: `--embedding-provider hf-inference`를 강제로 주는 방식은 이 환경에서 `Qwen/Qwen3-Embedding-8B`의 안정적인 경로가 아니었다.
   Evidence: 유효한 credential을 넣은 뒤에도 explicit `hf-inference` 호출은 `404`를 반환했고, 반면 기본 routed provider 경로는 임베딩을 정상 반환했다.
@@ -60,6 +61,9 @@
 
 - Observation: 전체 rebuild가 끝나기 전에 작은 채팅 범위 semantic probe를 먼저 돌리는 것이 유용했다.
   Evidence: 최근 연구실 채팅만 따로 인덱싱했을 때는 “최근 연구실 사람들 간의 대화 주제가 뭐지?” 질문에 의미상 관련 있는 hit가 나왔지만, 오래된 row 몇 개만 담은 작은 전역 rebuild는 그렇지 않았다.
+
+- Observation: system/feed row는 열린 기억형 질문에서 강한 semantic 노이즈였다.
+  Evidence: 필터링 전에는 교수님 지시사항 질문의 상위 hit에 `feedType` JSON과 사진 placeholder가 섞였지만, 실제 텍스트 메시지만 인덱싱하고 메타데이터를 함께 임베딩한 뒤에는 같은 질문이 교수 관련 대화를 반환했다.
 
 ## 결정 기록
 
@@ -103,9 +107,13 @@
   Rationale: fixture 데이터베이스가 semantic correctness를 증명해 주고, 최근 채팅 subset probe는 긴 전역 rebuild를 기다리지 않고도 사용자 체감 가치를 먼저 검증할 수 있다.
   Date/Author: 2026-03-07 / Codex
 
+- Decision: operator-facing 기본값은 `hybrid`로 두고, semantic 상태를 사용할 수 없을 때만 lexical로 fallback한다.
+  Rationale: 실제 질의 결과를 보면 열린 기억형 질문은 semantic recall의 이점을 크게 받았고, fallback을 lexical로 두면 sidecar가 아직 없거나 임베딩 호출이 실패하는 상황에서도 안전한 기본 동작을 유지할 수 있다.
+  Date/Author: 2026-03-07 / Codex
+
 ## 결과와 회고
 
-구현은 이제 들어가 있고, semantic 경로도 더 이상 이론 단계가 아니다. 패치 저장소는 `kakaocli-patched/README.md` 하나로 운영 가이드를 통합했고, 중복 repo-local `AGENTS.md` 파일은 제거했다. Live RAG 경로에는 semantic sidecar 빌드/갱신 스크립트와 서비스/CLI의 `lexical`, `semantic`, `hybrid` 검색 모드가 추가됐다. 관리형 서비스를 재시작한 뒤 lexical 동작은 여전히 wrapper를 통해 정상 동작했다. 또한 `Qwen/Qwen3-Embedding-8B`로 fixture 기반 semantic 검증이 통과했고, routed provider의 `(1, 4096)` 응답 shape를 파서가 받아들이도록 수정했으며, 제한된 실데이터 rebuild도 로컬 SQLite sidecar에 semantic 상태를 남기는 데 성공했다. 다음 세션의 남은 핵심은 기본 가능성 입증이 아니라 운영 규모 문제다. 즉, 실사용에 충분한 전체 semantic 인덱스를 완성하고, operator-facing 기본 검색 동작을 정하고, 고정 데이터셋에서 MD5를 다시 확인해야 한다.
+구현은 이제 들어가 있고, semantic 경로도 더 이상 이론 단계가 아니다. 패치 저장소는 `kakaocli-patched/README.md` 하나로 운영 가이드를 통합했고, 중복 repo-local `AGENTS.md` 파일은 제거했다. Live RAG 경로에는 semantic sidecar 빌드/갱신 스크립트와 서비스/CLI의 `lexical`, `semantic`, `hybrid` 검색 모드가 추가됐다. 관리형 서비스를 재시작한 뒤 lexical 동작은 여전히 wrapper를 통해 정상 동작했고, fixture 기반 semantic 검증도 `Qwen/Qwen3-Embedding-8B`로 통과한다. 이제 builder는 배치마다 체크포인트를 남기므로 긴 rebuild를 `--mode update`로 이어서 돌릴 수 있고, non-message row를 걸러내고 메타데이터를 함께 임베딩한 뒤에는 교수님 지시사항 질문이 direct CLI와 `./bin/query-kakao` 모두에서 교수 관련 대화 hit를 반환했다. 따라서 operator-facing 기본값은 `hybrid`로 확정됐고, 조용한 `/messages` slice에 대한 MD5 비교도 동일 해시로 닫혔다. 남은 선택적 후속 작업은 필요할 때 resumable rebuild를 계속 돌려 전체 coverage를 높이는 일뿐이다.
 
 ## 맥락과 구조 설명
 

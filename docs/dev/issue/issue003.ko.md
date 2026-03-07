@@ -1,6 +1,6 @@
 # 이슈 003: Kakao Live RAG 시맨틱 검색 및 README 통합
 
-**상태**: 진행 중
+**상태**: 완료
 **생성일**: 2026-03-07
 
 ## 배경
@@ -22,15 +22,15 @@
       `semantic`, `hybrid` 검색 모드를 지원한다.
 - [x] 시맨틱 검색은 외부 임베딩 API 모델을 사용하되, 검색 상태는 저장소 런타임
       데이터 디렉터리 아래 로컬에 유지된다.
-- [ ] 검색 파이프라인 변경 부분은 실행 가능한 검증 명령과 안정 출력 slice에 대한
+- [x] 검색 파이프라인 변경 부분은 실행 가능한 검증 명령과 안정 출력 slice에 대한
       MD5 비교로 확인된다.
 
 ## 작업 목록
 
-- [ ] 1. `.agents/exceplan/` 아래에 이 작업용 영문/국문 ExecPlan 문서를 저장한다.
+- [x] 1. `.agents/exceplan/` 아래에 이 작업용 영문/국문 ExecPlan 문서를 저장한다.
 - [x] 2. `kakaocli-patched/AGENTS.md` 내용을 `kakaocli-patched/README.md`로 통합한다.
 - [x] 3. 기존 `tools/live_rag` 파이프라인 위에 시맨틱 인덱싱과 검색을 추가한다.
-- [ ] 4. 동작을 검증하고, 이슈/우회책 기록을 업데이트한 뒤, 요구된 한국어 커밋을 준비한다.
+- [x] 4. 동작을 검증하고, 이슈/우회책 기록을 업데이트한 뒤, 요구된 한국어 커밋을 준비한다.
 
 ## 참고 사항
 
@@ -50,3 +50,19 @@
 - `/messages?limit=200` MD5는 구현 중 live sync가 새 Kakao row를 계속 받아서
   변경됐다. canonical endpoint의 스키마는 유지되지만, 안정적인 MD5 증명을 위해서는
   조용한 데이터셋이나 고정된 스냅샷이 필요하다.
+- semantic builder는 이제 배치마다 체크포인트를 기록하므로
+  `--mode update --batch-size N --progress`로 이어서 빌드할 수 있고,
+  긴 rebuild도 0부터 다시 시작할 필요가 없다.
+- semantic 임베딩 입력은 이제 일반 텍스트 메시지만 대상으로 삼고,
+  임베딩 전에 대화방/보낸 사람/방향 메타데이터를 함께 붙여서 열린 기억형 질문의
+  실데이터 검색 품질을 높였다.
+- operator-facing 기본값은 이제 `hybrid`다. semantic sidecar를 아직 만들지
+  않았거나 사용할 수 없을 때는 lexical 결과로 자동 fallback하고,
+  JSON 응답에 `requested_mode`와 `fallback_reason`을 남긴다.
+- 새 chunk 형식으로 sidecar를 다시 쌓은 뒤
+  `tools/live_rag/query.py --json --query-text "교수님이 나한테 지시하신 게 뭐지?"`
+  와 `./bin/query-kakao --json --query-text "교수님이 나한테 지시하신 게 뭐지?"`
+  모두 교수 관련 대화에 근거한 hit를 반환했다.
+- 조용한 `/messages` slice에 대한 MD5도 안정적으로 맞았다.
+  `chat_id=421983255615844&limit=200` 기준 before/after 해시는
+  `9fdd299ebe49192b9a803f2f06ec9abb`로 동일했다.

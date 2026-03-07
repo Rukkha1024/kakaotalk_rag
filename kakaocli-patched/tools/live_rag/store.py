@@ -335,7 +335,7 @@ class LiveRAGStore:
         after_log_id: int | None,
         limit: int | None,
     ) -> list[dict[str, Any]]:
-        clauses = ["COALESCE(TRIM(text), '') != ''"]
+        clauses = ["message_type = 1", "COALESCE(TRIM(text), '') != ''"]
         params: list[Any] = []
         if after_log_id is not None:
             clauses.append("log_id > ?")

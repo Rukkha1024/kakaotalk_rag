@@ -22,9 +22,10 @@ After this change, the existing Kakao Live RAG flow will still ingest messages l
 - [x] (2026-03-07) Fixed the Qwen embedding response parser so `Qwen/Qwen3-Embedding-8B` results shaped like `(1, 4096)` are accepted instead of treated as an unsupported payload.
 - [x] (2026-03-07) Confirmed a limited real-data semantic rebuild succeeds; `tools/live_rag/build_semantic_index.py --mode rebuild --limit 20` completed and persisted sidecar state in `.data/live_rag.sqlite3`.
 - [x] (2026-03-07) Ran a targeted lab-chat semantic probe by embedding a recent research-lab subset and using the question “최근 연구실 사람들 간의 대화 주제가 뭐지?” to retrieve meaning-based hits from the recent conversations.
-- [ ] Next-session gap: finish a useful full real-data semantic index build, or make the builder resumable/progress-visible enough that a long-running rebuild can be completed and trusted.
-- [ ] Next-session gap: decide and wire the operator-facing default retrieval behavior (`lexical` default, `semantic` default, or `hybrid` default with fallback) for questions such as “교수님이 나한테 지시하신 게 뭐지?”
-- [ ] Next-session gap: rerun the `/messages` MD5 comparison on a frozen or quiescent dataset; the previous before/after capture drifted because live ingestion continued during implementation.
+- [x] (2026-03-07) Added batch checkpointing and progress-visible semantic builds; `build_semantic_index.py --mode update --limit 20 --batch-size 20 --progress` resumed from the rebuild checkpoint and advanced `semantic_last_indexed_log_id` without clearing prior chunks.
+- [x] (2026-03-07) Filtered semantic indexing down to real text messages, prefixed chat/sender/direction metadata before embedding, and verified that the professor-instruction question now returns grounded professor-chat hits in `semantic`/default `hybrid` mode.
+- [x] (2026-03-07) Set the operator-facing default retrieval behavior to `hybrid` with lexical fallback when semantic state is unavailable, and documented the fallback metadata returned in JSON responses.
+- [x] (2026-03-07) Reran `/messages` MD5 on a quiescent chat slice (`chat_id=421983255615844&limit=200`) and confirmed the before/after hashes matched as `9fdd299ebe49192b9a803f2f06ec9abb`.
 
 ## Surprises & Discoveries
 
@@ -49,8 +50,8 @@ After this change, the existing Kakao Live RAG flow will still ingest messages l
 - Observation: the current cached Hugging Face login on this Mac exists but lacks permission to call inference providers for embeddings.
   Evidence: both `tools/live_rag/validate_semantic.py --use-temp-db` and `tools/live_rag/build_semantic_index.py` returned `403 Forbidden` from `router.huggingface.co`, even when `--embedding-provider hf-inference` was specified.
 
-- Observation: the `/messages?limit=200` MD5 changed across the before/after snapshots because live ingestion continued while implementation was in progress.
-  Evidence: both exports still contained 200 items, but the newest and oldest `log_id` values shifted between captures, which indicates ingestion drift rather than a response-shape regression.
+- Observation: global `/messages?limit=200` MD5 was unstable during implementation because live ingestion continued, but a quiescent chat-scoped slice was stable.
+  Evidence: the original global export drifted as newest and oldest `log_id` values changed, while `chat_id=421983255615844&limit=200` produced matching before/after hashes of `9fdd299ebe49192b9a803f2f06ec9abb`.
 
 - Observation: forcing `--embedding-provider hf-inference` was not the stable way to reach `Qwen/Qwen3-Embedding-8B` from this environment.
   Evidence: after valid credentials were supplied, explicit `hf-inference` calls returned `404`, while the default routed provider returned embeddings successfully.
@@ -60,6 +61,9 @@ After this change, the existing Kakao Live RAG flow will still ingest messages l
 
 - Observation: a small chat-scoped semantic probe was useful before the full rebuild finished.
   Evidence: indexing only recent lab-related chats produced semantically relevant hits for the “recent lab conversation topics” question, while a tiny global rebuild over the oldest rows did not.
+
+- Observation: system/feed rows were strong semantic noise sources for open-ended memory questions.
+  Evidence: before filtering, the professor-instruction query ranked `feedType` JSON rows and photo placeholders near the top; after restricting semantic indexing to real text messages and embedding metadata, the same question returned professor-related chats.
 
 ## Decision Log
 
@@ -103,9 +107,13 @@ After this change, the existing Kakao Live RAG flow will still ingest messages l
   Rationale: The fixture database proves semantic correctness, and a focused recent-chat probe proves user-facing value sooner than waiting on a long global rebuild.
   Date/Author: 2026-03-07 / Codex
 
+- Decision: Make `hybrid` the operator-facing default and fall back to lexical only when semantic state is unavailable.
+  Rationale: Real query evidence showed that open-ended memory prompts benefit from semantic recall, while lexical fallback preserves safe behavior before the sidecar exists or when embedding calls fail.
+  Date/Author: 2026-03-07 / Codex
+
 ## Outcomes & Retrospective
 
-Implementation is now in place and the semantic path is no longer just theoretical. The patched repo has one operator-facing guide in `kakaocli-patched/README.md`, the duplicate repo-local `AGENTS.md` file is gone, and the Live RAG code path now includes semantic-sidecar build/update scripts plus `lexical`, `semantic`, and `hybrid` retrieval modes in the service and CLI. Lexical behavior still works through the managed wrapper after a service restart. Fixture-backed semantic validation now passes with `Qwen/Qwen3-Embedding-8B`, the parser accepts the routed provider's `(1, 4096)` response shape, and a limited real-data rebuild has already persisted semantic state in the local SQLite sidecar. The remaining gap for the next session is operational scale rather than basic feasibility: complete a useful full real-data semantic index, decide the operator-facing default retrieval behavior, and rerun MD5 on a frozen dataset so ingestion drift does not muddy the before/after comparison.
+Implementation is now in place and the semantic path is no longer just theoretical. The patched repo has one operator-facing guide in `kakaocli-patched/README.md`, the duplicate repo-local `AGENTS.md` file is gone, and the Live RAG code path now includes semantic-sidecar build/update scripts plus `lexical`, `semantic`, and `hybrid` retrieval modes in the service and CLI. Lexical behavior still works through the managed wrapper after a service restart. Fixture-backed semantic validation passes with `Qwen/Qwen3-Embedding-8B`, the parser accepts the routed provider's `(1, 4096)` response shape, and the builder now checkpoints per batch so long rebuilds can resume through `--mode update` instead of restarting from zero. After filtering non-message rows and embedding chat/sender/direction metadata, the professor-instruction query returns grounded professor-chat hits in both the direct CLI and `./bin/query-kakao`, so the operator-facing default is now `hybrid` with explicit lexical fallback metadata. The MD5 check is also closed on a quiescent `/messages` slice, where the before/after hashes matched exactly. The remaining optional follow-up is purely operational: let the resumable rebuild continue to full coverage when convenient.
 
 ## Context and Orientation
 

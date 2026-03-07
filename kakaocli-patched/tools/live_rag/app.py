@@ -81,7 +81,8 @@ def create_app() -> FastAPI:
         query = str(payload.get("query", "")).strip()
         if not query:
             raise HTTPException(status_code=400, detail="`query` is required.")
-        mode = str(payload.get("mode", "lexical")).strip().lower()
+        requested_mode = str(payload.get("mode", "hybrid")).strip().lower()
+        mode = requested_mode
         if mode not in {"lexical", "semantic", "hybrid"}:
             raise HTTPException(status_code=400, detail="`mode` must be lexical, semantic, or hybrid.")
 
@@ -107,26 +108,32 @@ def create_app() -> FastAPI:
         if mode in {"semantic", "hybrid"}:
             settings = app.state.store.get_semantic_settings()
             if settings is None:
-                raise HTTPException(status_code=400, detail="Semantic index is not built yet.")
-            try:
-                client = ExternalEmbeddingClient(
-                    model=str(settings["embedding_model"]),
-                    provider=settings.get("embedding_provider"),
-                )
-                query_vector = client.embed_query(query)
-            except RuntimeError as error:
-                raise HTTPException(status_code=502, detail=str(error)) from error
-            semantic_hits = app.state.store.retrieve_semantic(
-                query_vector=query_vector,
-                limit=limit,
-                semantic_top_k=semantic_top_k,
-                chat_id=payload.get("chat_id"),
-                speaker=payload.get("speaker"),
-                since_days=since_days,
-                context_before=context_before,
-                context_after=context_after,
-                config_signature=str(settings["config_signature"]),
-            )
+                if mode == "semantic":
+                    raise HTTPException(status_code=400, detail="Semantic index is not built yet.")
+                mode = "lexical"
+            elif mode in {"semantic", "hybrid"}:
+                try:
+                    client = ExternalEmbeddingClient(
+                        model=str(settings["embedding_model"]),
+                        provider=settings.get("embedding_provider"),
+                    )
+                    query_vector = client.embed_query(query)
+                except RuntimeError as error:
+                    if mode == "semantic":
+                        raise HTTPException(status_code=502, detail=str(error)) from error
+                    mode = "lexical"
+                else:
+                    semantic_hits = app.state.store.retrieve_semantic(
+                        query_vector=query_vector,
+                        limit=limit,
+                        semantic_top_k=semantic_top_k,
+                        chat_id=payload.get("chat_id"),
+                        speaker=payload.get("speaker"),
+                        since_days=since_days,
+                        context_before=context_before,
+                        context_after=context_after,
+                        config_signature=str(settings["config_signature"]),
+                    )
 
         if mode == "lexical":
             hits = lexical_hits
@@ -135,7 +142,11 @@ def create_app() -> FastAPI:
         else:
             hits = reciprocal_rank_fuse(lexical_hits, semantic_hits, limit=limit)
 
-        return {"query": query, "mode": mode, "hits": hits}
+        response = {"query": query, "mode": mode, "hits": hits}
+        if requested_mode != mode:
+            response["requested_mode"] = requested_mode
+            response["fallback_reason"] = "semantic_unavailable"
+        return response
 
     return app
 

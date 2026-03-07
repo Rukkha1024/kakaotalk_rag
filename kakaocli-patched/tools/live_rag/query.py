@@ -38,6 +38,9 @@ def render_text(payload: dict[str, Any]) -> str:
         f"mode: {payload.get('mode', 'lexical')}",
         f"hits: {len(payload['hits'])}",
     ]
+    if payload.get("requested_mode") and payload.get("requested_mode") != payload.get("mode"):
+        lines.insert(2, f"requested_mode: {payload['requested_mode']}")
+        lines.insert(3, f"fallback_reason: {payload.get('fallback_reason', 'semantic_unavailable')}")
     for index, hit in enumerate(payload["hits"], start=1):
         message = hit["message"]
         lines.append(
@@ -64,7 +67,7 @@ def main() -> None:
     parser.add_argument("--db-path", default=str(DEFAULT_DB_PATH))
     parser.add_argument("--binary", default=str(DEFAULT_BINARY))
     parser.add_argument("--limit", type=int, default=8)
-    parser.add_argument("--mode", choices=("lexical", "semantic", "hybrid"), default="lexical")
+    parser.add_argument("--mode", choices=("lexical", "semantic", "hybrid"), default="hybrid")
     parser.add_argument("--semantic-top-k", type=int, default=24)
     parser.add_argument("--chat-id", type=int)
     parser.add_argument("--speaker")
