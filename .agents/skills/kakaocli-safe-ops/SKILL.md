@@ -9,8 +9,10 @@ Use `kakaocli` to handle KakaoTalk tasks on this Mac. This skill is for macOS on
 
 ## Local defaults on this Mac
 
-- Default raw CLI path: `/Users/alice/Documents/codex/kakaocli-patched/.build/release/kakaocli`
-- Default evidence query path: `conda run -n module python /Users/alice/Documents/codex/kakaocli-patched/tools/live_rag/query.py --json --query-text "..."`
+- From the repo root, default installer: `./install-kakaocli`
+- From the repo root, default raw CLI path: `./kakaocli-local`
+- From the repo root, default evidence query path: `./query-kakao --json --query-text "..."`
+- If you are already inside `kakaocli-patched/`, use `./bin/install-kakaocli`, `./bin/kakaocli-local`, and `./bin/query-kakao`
 - For KakaoTalk information requests, summaries, or evidence-backed answers, use the Live RAG query path first.
 - For installation, permissions, login, `status`, `auth`, and low-level diagnostics, use the raw CLI path.
 - Do not treat the Homebrew or `PATH` `kakaocli` as the default on this Mac. It may still point to the upstream build without the local `userId` cache fallback.
@@ -34,12 +36,12 @@ Do not use this skill for unrelated work.
 
 ## Install
 
-1. Check whether `/Users/alice/Documents/codex/kakaocli-patched/.build/release/kakaocli` already exists. If it does, use it as the default command.
-2. If the patched repo exists but the binary is missing, build `/Users/alice/Documents/codex/kakaocli-patched` with `swift build -c release`.
+1. From the repo root, run `./install-kakaocli`. If you are already in `kakaocli-patched/`, run `./bin/install-kakaocli`.
+2. The installer resolves repo-relative paths, ensures Homebrew `sqlcipher`, prepares the repo-local `.venv` for Live RAG helpers, and builds the patched release binary when needed.
 3. Only if the patched repo is unavailable, fall back to the upstream install path:
    `brew install silver-flight-group/tap/kakaocli`
 4. Explain that the Homebrew or upstream binary may still fail `auth` on this Mac because upstream `userId` discovery does not include the local cache fallback.
-5. Do not claim success until `/Users/alice/Documents/codex/kakaocli-patched/.build/release/kakaocli status` runs successfully.
+5. Do not claim success until `./kakaocli-local auth` or `./bin/kakaocli-local auth` succeeds.
 
 ## Permissions
 
@@ -54,34 +56,35 @@ Guide the user to:
 ## Verification
 
 Run, in order:
-1. `/Users/alice/Documents/codex/kakaocli-patched/.build/release/kakaocli status`
-2. `/Users/alice/Documents/codex/kakaocli-patched/.build/release/kakaocli auth`
-3. `/Users/alice/Documents/codex/kakaocli-patched/.build/release/kakaocli login --status`
+1. `./install-kakaocli`
+2. `./kakaocli-local auth`
+3. `./kakaocli-local login --status`
 4. For information requests or summaries, prefer:
-   `conda run -n module python /Users/alice/Documents/codex/kakaocli-patched/tools/live_rag/query.py --json --query-text "..."`
+   `./query-kakao --json --query-text "..."`
 
 Interpretation:
 - If `auth` succeeds, read commands are ready even without a visible KakaoTalk window.
 - If `login --status` shows missing credentials, explain that UI-driven commands may need `kakaocli login` and ask before storing credentials.
+- If `status` or `login --status` time out while probing KakaoTalk state, report that explicitly and continue from the `auth` result instead of retrying forever.
 - Do not start long-running monitoring as part of basic verification.
 
 ## Common read commands
 
 Prefer these first:
-- `/Users/alice/Documents/codex/kakaocli-patched/.build/release/kakaocli chats --json`
-- `/Users/alice/Documents/codex/kakaocli-patched/.build/release/kakaocli messages --chat "name" --since 1d --json`
-- `/Users/alice/Documents/codex/kakaocli-patched/.build/release/kakaocli search "keyword" --json`
-- `/Users/alice/Documents/codex/kakaocli-patched/.build/release/kakaocli query "SELECT COUNT(*) FROM NTChatMessage" --json`
+- `./kakaocli-local chats --json`
+- `./kakaocli-local messages --chat "name" --since 1d --json`
+- `./kakaocli-local search "keyword" --json`
+- `./kakaocli-local query "SELECT COUNT(*) FROM NTChatMessage" --json`
 
 ## Real-time and UI commands
 
 Use only when the user explicitly requests them:
-- `/Users/alice/Documents/codex/kakaocli-patched/.build/release/kakaocli sync --follow`
-- `/Users/alice/Documents/codex/kakaocli-patched/.build/release/kakaocli sync --follow --webhook http://localhost:8080/kakao`
-- `/Users/alice/Documents/codex/kakaocli-patched/.build/release/kakaocli harvest`
-- `/Users/alice/Documents/codex/kakaocli-patched/.build/release/kakaocli harvest --scroll`
-- `/Users/alice/Documents/codex/kakaocli-patched/.build/release/kakaocli send ...`
-- `/Users/alice/Documents/codex/kakaocli-patched/.build/release/kakaocli send --dry-run ...`
+- `./kakaocli-local sync --follow`
+- `./kakaocli-local sync --follow --webhook http://localhost:8080/kakao`
+- `./kakaocli-local harvest`
+- `./kakaocli-local harvest --scroll`
+- `./kakaocli-local send ...`
+- `./kakaocli-local send --dry-run ...`
 
 ## Known limitations
 

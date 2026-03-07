@@ -18,9 +18,15 @@ Read and send KakaoTalk messages from the command line. Requires macOS with Kaka
 
 ## Setup (Required First Time)
 
+If you are inside this patched repo, bootstrap it first:
+
+```bash
+./bin/install-kakaocli
+```
+
 ```bash
 # Store credentials for auto-login
-kakaocli login --email user@example.com --password yourpassword
+./bin/kakaocli-local login --email user@example.com --password yourpassword
 ```
 
 ## Available Commands

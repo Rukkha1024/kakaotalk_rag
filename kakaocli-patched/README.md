@@ -49,15 +49,30 @@ kakaocli는 AI 에이전트(Claude Code, Cursor, 커스텀 봇)가 카카오톡 
 
 ### 1. Install / 설치
 
-**Option A: Homebrew (recommended)**
+**Option A: This patched repo (recommended for copied or cloned setup)**
+
+From the `kakaocli-patched/` repo root:
+
+```bash
+./bin/install-kakaocli
+./bin/kakaocli-local auth
+```
+
+This path keeps all commands tied to the copied repo:
+- builds the patched binary inside `.build/release/`
+- installs `sqlcipher` if missing
+- prepares a repo-local `.venv/` for the Live RAG helpers
+- avoids falling back to the upstream `PATH` `kakaocli`
+
+**Option B: Homebrew (upstream)**
 
 ```bash
 brew install silver-flight-group/tap/kakaocli
 ```
 
-This installs sqlcipher automatically and builds from source (~20 seconds).
+This installs sqlcipher automatically and builds from source (~20 seconds), but it may not include the local `userId` cache fallback used by this patched repo.
 
-**Option B: Build from source**
+**Option C: Build from source**
 
 ```bash
 brew install sqlcipher
@@ -193,26 +208,26 @@ When you run `send`, `sync`, or any command that needs KakaoTalk, the tool autom
 
 kakaocli is designed to work with AI coding assistants and agents. Every read command outputs structured JSON, and the tool handles KakaoTalk's full lifecycle automatically (launch, login, window management).
 
-### Codex (local patched workflow)
+### Codex (repo-local patched workflow)
 
-For this local patched repo on this Mac, use these defaults first:
+For this patched repo, use these defaults first:
 
 ```bash
-export KAKAOCLI_BIN="/Users/alice/Documents/codex/kakaocli-patched/.build/release/kakaocli"
+./bin/install-kakaocli
 
 # Evidence-backed KakaoTalk answers, summaries, and information requests
-conda run -n module python /Users/alice/Documents/codex/kakaocli-patched/tools/live_rag/query.py --json --query-text "박다훈 업데이트"
+./bin/query-kakao --json --query-text "박다훈 업데이트"
 
 # Install, permissions, login, status, auth, and low-level diagnostics
-$KAKAOCLI_BIN status
-$KAKAOCLI_BIN auth
-$KAKAOCLI_BIN login --status
+./bin/kakaocli-local status
+./bin/kakaocli-local auth
+./bin/kakaocli-local login --status
 ```
 
-- Prefer `query.py` for KakaoTalk information lookups, summaries, and evidence-backed answers.
-- Prefer `$KAKAOCLI_BIN` for installation, permissions, login, `status`, `auth`, and raw CLI diagnostics.
+- Prefer `./bin/query-kakao` for KakaoTalk information lookups, summaries, and evidence-backed answers.
+- Prefer `./bin/kakaocli-local` for installation, permissions, login, `status`, `auth`, and raw CLI diagnostics.
 - Run `send`, `sync --follow`, and `harvest` only when the user explicitly asks or approves.
-- On this Mac, the Homebrew or `PATH` `kakaocli` may still point to the upstream build without the local `userId` cache fallback. Do not treat it as the default.
+- On this Mac, the Homebrew or `PATH` `kakaocli` may still point to the upstream build without the local `userId` cache fallback. Do not treat it as the default for this repo.
 
 See [AGENTS.md](AGENTS.md) for the full routing rules and local operational guidance.
 
@@ -261,10 +276,10 @@ For agents that need to react to incoming messages in real-time after an explici
 
 ```bash
 # Stream new messages as NDJSON (pipe to your agent)
-/Users/alice/Documents/codex/kakaocli-patched/.build/release/kakaocli sync --follow | your-agent-processor
+./bin/kakaocli-local sync --follow | your-agent-processor
 
 # Or POST to a webhook endpoint
-/Users/alice/Documents/codex/kakaocli-patched/.build/release/kakaocli sync --follow --webhook http://localhost:8080/kakao
+./bin/kakaocli-local sync --follow --webhook http://localhost:8080/kakao
 ```
 
 Each new message is delivered as a JSON object:

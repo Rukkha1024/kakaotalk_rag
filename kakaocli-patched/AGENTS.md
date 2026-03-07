@@ -5,24 +5,21 @@ Instructions for AI agents that want to read and send KakaoTalk messages.
 ## Prerequisites
 
 - macOS 14+ with KakaoTalk desktop app installed
-- local patched binary built at `/Users/alice/Documents/codex/kakaocli-patched/.build/release/kakaocli`
+- repo-local installer available at `./bin/install-kakaocli`
 - System Settings > Privacy & Security: **Full Disk Access** + **Accessibility** granted to your terminal
 - KakaoTalk credentials stored (see First-Time Setup below)
 
 ## Local Command Defaults
 
-For this repo on this Mac, prefer these entrypoints:
+For this repo on this Mac, prefer these entrypoints from the `kakaocli-patched/` root:
 
-```bash
-export KAKAOCLI_BIN="/Users/alice/Documents/codex/kakaocli-patched/.build/release/kakaocli"
-```
-
-- Information requests, summaries, and evidence-backed KakaoTalk answers: `conda run -n module python /Users/alice/Documents/codex/kakaocli-patched/tools/live_rag/query.py --json --query-text "..."`
-- Installation, permissions, login, `status`, `auth`, and low-level diagnostics: `$KAKAOCLI_BIN ...`
+- Install and bootstrap: `./bin/install-kakaocli`
+- Information requests, summaries, and evidence-backed KakaoTalk answers: `./bin/query-kakao --json --query-text "..."`
+- Installation, permissions, login, `status`, `auth`, and low-level diagnostics: `./bin/kakaocli-local ...`
 - `send`, `sync --follow`, and `harvest`: run only when the user explicitly asks or approves.
 - The Homebrew or `PATH` `kakaocli` on this Mac may still point to the upstream build without the local `userId` cache fallback. Do not treat it as the default.
 
-Unless otherwise noted, the `kakaocli` examples below refer to `$KAKAOCLI_BIN`.
+Unless otherwise noted, the `kakaocli` examples below refer to `./bin/kakaocli-local`.
 
 ## First-Time Setup
 
@@ -30,10 +27,10 @@ Before using kakaocli, store credentials so the tool can auto-login:
 
 ```bash
 # Store KakaoTalk credentials (saved in macOS Keychain)
-kakaocli login --email user@example.com --password yourpassword
+./bin/kakaocli-local login --email user@example.com --password yourpassword
 
 # Verify everything is working
-kakaocli login --status
+./bin/kakaocli-local login --status
 # Expected output includes: "Stored credentials: Yes"
 ```
 
@@ -183,7 +180,7 @@ Returns: `{"status":"ready","max_log_id":12345}` — useful for getting the curr
 Use the local Live RAG query entrypoint when an agent needs evidence-backed KakaoTalk answers:
 
 ```bash
-conda run -n module python /Users/alice/Documents/codex/kakaocli-patched/tools/live_rag/query.py --json --query-text "박다훈 업데이트"
+./bin/query-kakao --json --query-text "박다훈 업데이트"
 ```
 
 This entrypoint:
@@ -195,8 +192,8 @@ This entrypoint:
 To manage the background service directly:
 
 ```bash
-conda run -n module python /Users/alice/Documents/codex/kakaocli-patched/tools/live_rag/service_manager.py ensure
-conda run -n module python /Users/alice/Documents/codex/kakaocli-patched/tools/live_rag/service_manager.py status
+./.venv/bin/python tools/live_rag/service_manager.py ensure
+./.venv/bin/python tools/live_rag/service_manager.py status
 ```
 
 Routing rule:
@@ -211,25 +208,28 @@ For user-facing KakaoTalk questions, call the Live RAG query path first. The raw
 Typical raw agent loop:
 
 ```python
-import subprocess, json
+import json
+import subprocess
+from pathlib import Path
 
-KAKAOCLI_BIN = "/Users/alice/Documents/codex/kakaocli-patched/.build/release/kakaocli"
+REPO_ROOT = Path.cwd()
+KAKAOCLI_BIN = REPO_ROOT / "bin" / "kakaocli-local"
 
 # 1. Check for new messages
-proc = subprocess.run([KAKAOCLI_BIN, "messages", "--since", "5m", "--json"],
+proc = subprocess.run([str(KAKAOCLI_BIN), "messages", "--since", "5m", "--json"],
                       capture_output=True, text=True)
 messages = json.loads(proc.stdout)
 
 # 2. Process and respond
 for msg in messages:
     if not msg["is_from_me"] and needs_response(msg):
-        subprocess.run([KAKAOCLI_BIN, "send", msg["chat_name"], response_text])
+        subprocess.run([str(KAKAOCLI_BIN), "send", msg["chat_name"], response_text])
 ```
 
 Or use sync mode for real-time:
 
 ```bash
-$KAKAOCLI_BIN sync --follow | while read -r line; do
+./bin/kakaocli-local sync --follow | while read -r line; do
   echo "$line" | jq -r '.text' | process_message
 done
 ```

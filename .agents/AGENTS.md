@@ -19,7 +19,7 @@
 - Use `$readme-update-only` skill when the user asks to revise, refresh, reorganize, or maintain README content, or when the user explicitly types `$readme-update-only`. Rather than explaining the code itself, write for those who may not know how to code. Focus on execution commands and the overall workflow of the project.
 - Python Files: Write a docstring of 7 lines or fewer explaining the core function and logic. Keep it concise so that anyone opening the file can immediately understand its purpose.
 - Use $kakaocli-safe-ops for KakaoTalk tasks on this Mac. For non-Kakao tasks, do not use kakaocli or its skill. Never send messages to other people without my explicit confirmation.
-- For KakaoTalk information requests, first run `conda run -n module python /Users/alice/Documents/codex/kakaocli-patched/tools/live_rag/query.py --json --query-text "<request>"`.
+- For KakaoTalk information requests, first run `./query-kakao --json --query-text "<request>"` from the repo root.
 - The Live RAG query entrypoint must ensure the launchd-backed webhook server and sync follower are running before answering.
 - Ground KakaoTalk answers in retrieved chat evidence whenever the query returns hits.
 

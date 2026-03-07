@@ -12,6 +12,7 @@ import os
 import plistlib
 import shutil
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -69,19 +70,12 @@ def log_dir() -> Path:
     return path
 
 
-def resolve_conda_executable() -> str:
+def resolve_python_executable() -> str:
     candidates = [
-        os.environ.get("CONDA_EXE"),
-        shutil.which("conda"),
+        os.environ.get("LIVE_RAG_PYTHON"),
+        sys.executable,
+        shutil.which("python3"),
     ]
-    shell_lookup = subprocess.run(
-        ["/bin/zsh", "-lc", "command -v conda"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if shell_lookup.returncode == 0:
-        candidates.append(shell_lookup.stdout.strip())
 
     for candidate in candidates:
         if not candidate:
@@ -90,7 +84,7 @@ def resolve_conda_executable() -> str:
         if candidate_path.exists():
             return str(candidate_path)
 
-    raise RuntimeError("Could not resolve the absolute path to `conda`.")
+    raise RuntimeError("Could not resolve the absolute path to Python.")
 
 
 def parse_host_port(base_url: str) -> tuple[str, int]:
@@ -111,16 +105,11 @@ def build_launch_agent(
     host, port = parse_host_port(base_url)
     stdout_path = log_dir() / "launchd.stdout.log"
     stderr_path = log_dir() / "launchd.stderr.log"
-    conda_exe = resolve_conda_executable()
+    python_exe = resolve_python_executable()
     plist = {
         "Label": launch_agent_label(),
         "ProgramArguments": [
-            conda_exe,
-            "run",
-            "--no-capture-output",
-            "-n",
-            "module",
-            "python",
+            python_exe,
             str(REPO_ROOT / "tools" / "live_rag" / "supervisor.py"),
             "--base-url",
             base_url,
@@ -136,6 +125,7 @@ def build_launch_agent(
             "PYTHONUNBUFFERED": "1",
             "LIVE_RAG_BASE_URL": base_url,
             "LIVE_RAG_DB_PATH": str(db_path),
+            "LIVE_RAG_PYTHON": python_exe,
         },
         "RunAtLoad": True,
         "KeepAlive": True,
