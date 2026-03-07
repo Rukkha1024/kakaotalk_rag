@@ -17,7 +17,14 @@ After this change, the existing Kakao Live RAG flow will still ingest messages l
 - [x] (2026-03-07 07:25Z) Merged the repo-local `kakaocli-patched/AGENTS.md` content into `kakaocli-patched/README.md`, removed README links that required a separate repo-local AGENTS file, and deleted `kakaocli-patched/AGENTS.md`.
 - [x] (2026-03-07 07:25Z) Added a semantic indexing path that reads from the existing `messages` table, chunks text windows, calls the Hugging Face embedding API through `huggingface_hub`, and stores local semantic metadata in the Live RAG SQLite database under `.data/`.
 - [x] (2026-03-07 07:25Z) Exposed `lexical`, `semantic`, and `hybrid` retrieval through the existing service and CLI without removing the lexical fallback path.
-- [ ] Validation is partially complete (completed: dependency install, wrapper rebuild, lexical smoke test, service restart, AGENTS-retirement grep, structured semantic failure checks; remaining: successful semantic build/query with a token that has provider permission, and MD5 capture on a quiescent dataset so live sync does not change the slice mid-run).
+- [x] (2026-03-07) Verified the runtime path still works after the semantic changes: `conda run -n module python -m compileall tools/live_rag`, `./bin/install-kakaocli --build-only`, service restart, and `./bin/query-kakao --json --mode lexical --query-text "업데이트"` all succeeded.
+- [x] (2026-03-07) Verified deterministic semantic validation with a fixture-backed temp database after supplying a valid Hugging Face token; `tools/live_rag/validate_semantic.py --use-temp-db` returned the expected semantic hit set.
+- [x] (2026-03-07) Fixed the Qwen embedding response parser so `Qwen/Qwen3-Embedding-8B` results shaped like `(1, 4096)` are accepted instead of treated as an unsupported payload.
+- [x] (2026-03-07) Confirmed a limited real-data semantic rebuild succeeds; `tools/live_rag/build_semantic_index.py --mode rebuild --limit 20` completed and persisted sidecar state in `.data/live_rag.sqlite3`.
+- [x] (2026-03-07) Ran a targeted lab-chat semantic probe by embedding a recent research-lab subset and using the question “최근 연구실 사람들 간의 대화 주제가 뭐지?” to retrieve meaning-based hits from the recent conversations.
+- [ ] Next-session gap: finish a useful full real-data semantic index build, or make the builder resumable/progress-visible enough that a long-running rebuild can be completed and trusted.
+- [ ] Next-session gap: decide and wire the operator-facing default retrieval behavior (`lexical` default, `semantic` default, or `hybrid` default with fallback) for questions such as “교수님이 나한테 지시하신 게 뭐지?”
+- [ ] Next-session gap: rerun the `/messages` MD5 comparison on a frozen or quiescent dataset; the previous before/after capture drifted because live ingestion continued during implementation.
 
 ## Surprises & Discoveries
 
@@ -44,6 +51,15 @@ After this change, the existing Kakao Live RAG flow will still ingest messages l
 
 - Observation: the `/messages?limit=200` MD5 changed across the before/after snapshots because live ingestion continued while implementation was in progress.
   Evidence: both exports still contained 200 items, but the newest and oldest `log_id` values shifted between captures, which indicates ingestion drift rather than a response-shape regression.
+
+- Observation: forcing `--embedding-provider hf-inference` was not the stable way to reach `Qwen/Qwen3-Embedding-8B` from this environment.
+  Evidence: after valid credentials were supplied, explicit `hf-inference` calls returned `404`, while the default routed provider returned embeddings successfully.
+
+- Observation: the successful Qwen embedding payload arrived as a two-dimensional array for a single text, not a flat vector.
+  Evidence: direct inspection of `InferenceClient.feature_extraction(..., model="Qwen/Qwen3-Embedding-8B")` returned a payload shaped like `(1, 4096)`, which required a parser fix before fixture validation passed.
+
+- Observation: a small chat-scoped semantic probe was useful before the full rebuild finished.
+  Evidence: indexing only recent lab-related chats produced semantically relevant hits for the “recent lab conversation topics” question, while a tiny global rebuild over the oldest rows did not.
 
 ## Decision Log
 
@@ -79,9 +95,17 @@ After this change, the existing Kakao Live RAG flow will still ingest messages l
   Rationale: If Hugging Face authentication fails, the existing semantic state should remain intact, and operators need machine-readable failure output instead of raw tracebacks.
   Date/Author: 2026-03-07 / Codex
 
+- Decision: Prefer the default Hugging Face routed provider path for `Qwen/Qwen3-Embedding-8B` instead of forcing `hf-inference`.
+  Rationale: In this environment the explicit `hf-inference` route returned `404`, while the default provider routing returned valid embeddings once token permission and billing were in place.
+  Date/Author: 2026-03-07 / Codex
+
+- Decision: Use targeted chat-scoped semantic probes as an interim validation technique while the full real-data rebuild remains slow or operationally expensive.
+  Rationale: The fixture database proves semantic correctness, and a focused recent-chat probe proves user-facing value sooner than waiting on a long global rebuild.
+  Date/Author: 2026-03-07 / Codex
+
 ## Outcomes & Retrospective
 
-Implementation is now in place. The patched repo has one operator-facing guide in `kakaocli-patched/README.md`, the duplicate repo-local `AGENTS.md` file is gone, and the Live RAG code path now includes semantic-sidecar build/update scripts plus `lexical`, `semantic`, and `hybrid` retrieval modes in the service and CLI. Lexical behavior still works through the managed wrapper after a service restart. The remaining gap is not code shape but environment proof: this Mac's cached Hugging Face credentials do not currently have inference-provider permission, so the deterministic semantic validation and a real semantic index build are blocked until a suitable token is supplied. The MD5 comparison also needs to be rerun against a quiet or frozen dataset because live sync kept ingesting newer rows during the implementation window.
+Implementation is now in place and the semantic path is no longer just theoretical. The patched repo has one operator-facing guide in `kakaocli-patched/README.md`, the duplicate repo-local `AGENTS.md` file is gone, and the Live RAG code path now includes semantic-sidecar build/update scripts plus `lexical`, `semantic`, and `hybrid` retrieval modes in the service and CLI. Lexical behavior still works through the managed wrapper after a service restart. Fixture-backed semantic validation now passes with `Qwen/Qwen3-Embedding-8B`, the parser accepts the routed provider's `(1, 4096)` response shape, and a limited real-data rebuild has already persisted semantic state in the local SQLite sidecar. The remaining gap for the next session is operational scale rather than basic feasibility: complete a useful full real-data semantic index, decide the operator-facing default retrieval behavior, and rerun MD5 on a frozen dataset so ingestion drift does not muddy the before/after comparison.
 
 ## Context and Orientation
 
@@ -97,122 +121,102 @@ The user-facing query wrapper is `/Users/alice/Documents/codex/query-kakao`, whi
 
 ## Plan of Work
 
-The first milestone is documentation consolidation before behavior changes. Update `kakaocli-patched/README.md` so it directly contains the repo-local operational material that is currently stranded in `kakaocli-patched/AGENTS.md`, including credential storage behavior, automatic lifecycle management, app state detection, AX quirks, Live RAG routing, troubleshooting, and safety rules. Remove README links that tell readers to “see AGENTS.md” for local guidance. Once the README fully carries that content, delete `kakaocli-patched/AGENTS.md`. This is not a pure cosmetic step: it removes a second misleading `AGENTS.md` file from inside a repo that already sits under a higher-level `AGENTS.md`.
+The first milestone for the next session is to turn the semantic path from “proven on fixtures and subsets” into “useful on the real database.” Start by confirming the current fixture validation still passes and inspecting the current semantic-sidecar stats in `.data/live_rag.sqlite3`. Then attempt a full rebuild against the real message store with the current Qwen configuration. If the rebuild completes in a reasonable time, record the resulting semantic counts and move directly to operator-facing query validation. If it does not, pause and make `build_semantic_index.py` more operationally usable by adding resumable batching and visible progress so a long rebuild can be resumed instead of restarted blindly.
 
-The second milestone is a local semantic index builder that does not disturb current ingestion. Add `kakaocli-patched/tools/live_rag/embedding_client.py` to wrap Hugging Face embedding calls. It must accept either `HF_TOKEN` from the environment or the token cached by `hf auth login`, and it must expose one method for document embeddings and one method for query embeddings. Add `kakaocli-patched/tools/live_rag/semantic_index.py` to define chunking, vector serialization, cosine similarity scoring, and index state. Extend `kakaocli-patched/tools/live_rag/store.py` so the same SQLite database can persist chunk metadata, model identity, and embedding checkpoint state. The canonical message rows remain untouched; semantic rows are a sidecar built from them.
+The second milestone is to decide the operator-facing retrieval default. The code already supports `lexical`, `semantic`, and `hybrid`, but the next session needs an explicit answer to what `query-kakao` should do for open-ended memory questions such as “교수님이 나한테 지시하신 게 뭐지?” There are only three sane choices: keep lexical as the default and require an explicit mode switch, change the default to hybrid, or add a small fallback rule that uses hybrid/semantic for broad memory questions while preserving lexical for exact phrase lookups. The decision should be made with real query evidence, not by taste.
 
-The third milestone is a retrieval API that preserves current behavior. Extend `kakaocli-patched/tools/live_rag/app.py` so `/retrieve` accepts a `mode` field with values `lexical`, `semantic`, or `hybrid`. The existing lexical implementation remains the default safe path. Add a semantic retrieval path that embeds the incoming query, scores local chunks, expands matched chunks back to surrounding Kakao messages, and returns the same response shape already used by `query.py`. Add a hybrid path that combines the lexical list and semantic list using a simple rank-combination method that is stable across score scales. The response must still be easy to inject into an LLM prompt because that is how this repo already uses retrieval.
+The third milestone is user-facing semantic validation on real chat history. After a meaningful sidecar exists, run both `tools/live_rag/query.py` and `./bin/query-kakao` in `semantic` and `hybrid` modes with a question that resembles how the operator will actually ask. The key smoke test is whether a question like “교수님이 나한테 지시하신 게 뭐지?” returns hits grounded in the intended professor-related chats rather than random early messages. If the results are weak, inspect whether the failure is due to insufficient index coverage, chunking strategy, recency filtering, or ranking combination.
 
-The fourth milestone is operator usability and safety. Extend `kakaocli-patched/tools/live_rag/query.py` to accept `--mode`, `--semantic-top-k`, and `--since-days` so recency filtering is explicit instead of implied. Add a new script `kakaocli-patched/tools/live_rag/build_semantic_index.py` that can perform a full rebuild or an incremental update from the existing message store, and make that script accept the configurable embedding model and provider. Update `kakaocli-patched/requirements-live-rag.txt` with the smallest useful dependency set, expected to be `huggingface_hub` and `numpy`, and avoid adding larger frameworks. Update `kakaocli-patched/README.md` so future operators understand token setup, model selection, the difference between lexical and semantic search, and the exact commands to run from the `module` conda environment. Because `./bin/query-kakao` uses the repo-local `.venv`, this milestone must also keep `./bin/install-kakaocli` compatible so the wrapper still works after dependency changes.
-
-The fifth milestone is validation and repo bookkeeping. Add a small validation script such as `kakaocli-patched/tools/live_rag/validate_semantic.py` that creates an isolated temporary database, seeds a fixed Kakao-like message fixture, proves one document embedding call succeeds, proves one local index build succeeds, and proves one paraphrased query returns the expected fixture hit. Keep a separate smoke check against the real Live RAG database for lexical behavior and wrapper usability, but do not make a fixed live semantic query the primary acceptance criterion. Capture a reference export from the stable `/messages` endpoint before the semantic work and again after it, then compare MD5 hashes so we can prove the canonical ingestion output did not change. After the README consolidation, run a repository search only inside `kakaocli-patched/` to confirm there are no remaining references to `kakaocli-patched/AGENTS.md`. Record implementation notes and blockers in `docs/issue/issue003.md` and `docs/dev/issue/issue003.ko.md`; if the work uncovers a reusable environment workaround worth preserving separately, add a timestamped Markdown note under `kakaocli-patched/progress/`. Remove temporary artifacts, and create the required Korean git commit only after the implementation has been reviewed and accepted.
+The fourth milestone is cleanup and proof. Rerun the `/messages` MD5 comparison only after choosing a frozen or quiescent slice so ingestion drift does not invalidate the comparison. Then update `docs/issue/issue003.md`, `docs/dev/issue/issue003.ko.md`, and this ExecPlan pair with the final operator behavior, semantic build status, and any reusable rebuild workaround that future sessions should know.
 
 ## Concrete Steps
 
 All commands below assume the working directory is `/Users/alice/Documents/codex/kakaocli-patched` unless a command explicitly says otherwise.
 
-1. Create tracking documents before code changes.
+1. Confirm the semantic baseline still works before touching more code.
+
+    cd /Users/alice/Documents/codex/kakaocli-patched
+    conda run -n module python tools/live_rag/validate_semantic.py --use-temp-db
+
+    Expected result:
+      The fixture-backed semantic validation returns `{"status":"ok",...}` and proves the current token, model, and parser path are still healthy.
+
+2. Inspect the current semantic sidecar state so the next session starts from facts instead of assumptions.
+
+    cd /Users/alice/Documents/codex/kakaocli-patched
+    conda run -n module python - <<'PY'
+    from tools.live_rag.store import LiveRAGStore
+    store = LiveRAGStore()
+    print(store.semantic_stats())
+    PY
+
+    Expected result:
+      The command prints the current semantic chunk count, message count, and configuration signature already stored in `.data/live_rag.sqlite3`.
+
+3. Attempt a meaningful real-data semantic rebuild with the current Qwen configuration.
+
+    cd /Users/alice/Documents/codex/kakaocli-patched
+    conda run -n module python tools/live_rag/build_semantic_index.py --mode rebuild
+
+    Expected result:
+      Either the command completes with JSON success and a large embedded chunk count, or it proves the remaining operational problem is rebuild duration rather than embedding correctness.
+
+4. If the full rebuild is too slow or too opaque, improve the builder instead of repeatedly restarting it blindly.
+
+    Goal for the edit:
+      Add resumable batching and visible progress output to `tools/live_rag/build_semantic_index.py`, then rerun the rebuild until a useful full-database sidecar exists.
+
+5. Restart the managed service and query through both direct and wrapper entrypoints.
+
+    cd /Users/alice/Documents/codex/kakaocli-patched
+    conda run -n module python tools/live_rag/service_manager.py restart
+    conda run -n module python tools/live_rag/query.py --mode semantic --json --query-text "교수님이 나한테 지시하신 게 뭐지?"
+    conda run -n module python tools/live_rag/query.py --mode hybrid --json --query-text "교수님이 나한테 지시하신 게 뭐지?"
+    ./bin/query-kakao --json --mode semantic --query-text "교수님이 나한테 지시하신 게 뭐지?"
+    ./bin/query-kakao --json --mode hybrid --query-text "교수님이 나한테 지시하신 게 뭐지?"
+
+    Expected result:
+      At least one operator-facing mode returns hits grounded in the intended professor-related chats instead of arbitrary old messages.
+
+6. Decide the default operator behavior only after examining the real query evidence.
+
+    Decision to record:
+      Keep `lexical` as default, switch default to `hybrid`, or introduce a narrow fallback rule for open-ended memory questions.
+
+7. Rerun MD5 on a frozen or quiescent message slice.
+
+    cd /Users/alice/Documents/codex/kakaocli-patched
+    curl -s http://127.0.0.1:8765/messages?limit=200 > /tmp/live_rag_messages_frozen_before.json
+    md5 /tmp/live_rag_messages_frozen_before.json
+    # perform the semantic-sidecar work without changing canonical messages
+    curl -s http://127.0.0.1:8765/messages?limit=200 > /tmp/live_rag_messages_frozen_after.json
+    md5 /tmp/live_rag_messages_frozen_after.json
+
+    Expected result:
+      The hashes match on a truly stable slice, or any mismatch is explained as ingestion drift rather than a semantic-sidecar regression.
+
+8. Update the issue docs and both ExecPlans with the final next-session outcome.
 
     cd /Users/alice/Documents/codex
-    ls docs/issue | sort
-    ls docs/dev/issue | sort
-
-2. Consolidate the patched repo documentation before semantic code changes.
-
-    cd /Users/alice/Documents/codex/kakaocli-patched
-    rg -n "AGENTS.md" README.md AGENTS.md
+    sed -n '1,160p' docs/issue/issue003.md
+    sed -n '1,160p' docs/dev/issue/issue003.ko.md
 
     Expected result:
-      README.md shows the old links that must be removed.
-      AGENTS.md is still present at this point and will be merged then deleted.
-
-3. Install or update Python dependencies inside the required conda environment.
-
-    cd /Users/alice/Documents/codex/kakaocli-patched
-    conda run -n module pip install -r requirements-live-rag.txt
-
-4. Refresh the repo-local wrapper runtime, confirm the current local service works, and capture the baseline output before touching retrieval.
-
-    cd /Users/alice/Documents/codex/kakaocli-patched
-    ./bin/install-kakaocli --build-only
-    conda run -n module python tools/live_rag/service_manager.py ensure
-    curl -s http://127.0.0.1:8765/messages?limit=200 > /tmp/live_rag_messages_before.json
-    md5 /tmp/live_rag_messages_before.json
-    ./bin/query-kakao --json --query-text "업데이트"
-
-    Expected success shape:
-      {"query":"업데이트","hits":[...]}
-    Expected failure shape if auth is broken:
-      Failed to query live RAG: ...
-
-5. Build or refresh the semantic sidecar from existing Kakao messages.
-
-    cd /Users/alice/Documents/codex/kakaocli-patched
-    HF_TOKEN=... conda run -n module python tools/live_rag/build_semantic_index.py --mode rebuild --limit 500
-
-    Expected success shape:
-      {"status":"ok","embedded_chunks":500,"updated_from_log_id":12345,"model":"Qwen/Qwen3-Embedding-8B"}
-
-6. Run the deterministic semantic validation script against a temporary fixture database.
-
-    cd /Users/alice/Documents/codex/kakaocli-patched
-    HF_TOKEN=... conda run -n module python tools/live_rag/validate_semantic.py --use-temp-db
-
-    Expected success shape:
-      {"status":"ok","fixture_query":"회의 연기된 내용","expected_log_id":123,"semantic_hit_log_ids":[123,...]}
-    Expected failure shape if Hugging Face auth is missing:
-      {"status":"error","stage":"embed_documents","message":"..."}
-
-7. Optionally smoke-test semantic mode and hybrid mode against the real local database after the fixture test passes.
-
-    cd /Users/alice/Documents/codex/kakaocli-patched
-    HF_TOKEN=... conda run -n module python tools/live_rag/query.py --mode semantic --json --query-text "<paraphrase of a known real message>"
-    HF_TOKEN=... conda run -n module python tools/live_rag/query.py --mode hybrid --json --query-text "<same paraphrase>"
-
-    Expected result:
-      The commands return JSON with `"mode":"semantic"` and `"mode":"hybrid"`.
-      Hit counts may vary with the operator's actual Kakao history, so this step is a smoke check, not the primary semantic proof.
-
-8. Capture stable output and compare MD5 before and after.
-
-    cd /Users/alice/Documents/codex/kakaocli-patched
-    curl -s http://127.0.0.1:8765/messages?limit=200 > /tmp/live_rag_messages_after.json
-    md5 /tmp/live_rag_messages_before.json
-    md5 /tmp/live_rag_messages_after.json
-
-    Expected result:
-      The MD5 hashes match if canonical message output is unchanged.
-      If they do not match, stop and explain whether the difference is ordering, formatting, or unintended ingestion drift.
-
-9. Confirm that the repo-local AGENTS file is fully retired.
-
-    cd /Users/alice/Documents/codex
-    rg -n "kakaocli-patched/AGENTS.md|\\[AGENTS\\.md\\]\\(AGENTS\\.md\\)|See \\[AGENTS\\.md\\]" /Users/alice/Documents/codex/kakaocli-patched
-
-    Expected result:
-      No remaining references inside `kakaocli-patched/README.md` or other patched-repo docs that require the deleted repo-local AGENTS file.
-
-10. Update the concrete issue records that already exist for this work.
-
-    cd /Users/alice/Documents/codex
-    sed -n '1,120p' docs/issue/issue003.md
-    sed -n '1,120p' docs/dev/issue/issue003.ko.md
-
-    Expected result:
-      Record the implementation notes, blockers, and final validation summary in those two issue files.
-      If a separate reusable workaround note is needed, create it under `kakaocli-patched/progress/YYMMDD-HHMM-*.md`.
+      The issue docs and this ExecPlan pair record whether the full semantic rebuild finished, what default retrieval behavior was chosen, and how the operator-facing professor-question test behaved.
 
 ## Validation and Acceptance
 
 Acceptance is behavioral. The change is accepted only if all of the following are true.
 
 - The existing lexical query path still returns hits for an exact keyword query through `tools/live_rag/query.py`.
-- `./bin/query-kakao --json --query-text "업데이트"` still works after the dependency and retrieval changes, proving the repo-local wrapper path remains healthy.
-- `tools/live_rag/validate_semantic.py --use-temp-db` returns the expected fixture hit for a paraphrased query in `semantic` mode.
-- `hybrid` mode returns a merged result list using the same response schema as the current retrieval path.
+- `./bin/query-kakao --json --mode lexical --query-text "업데이트"` still works, proving the repo-local wrapper path remains healthy after the semantic changes.
+- `tools/live_rag/validate_semantic.py --use-temp-db` still returns the expected fixture hit for a paraphrased query in `semantic` mode with `Qwen/Qwen3-Embedding-8B`.
+- A meaningful real-data semantic sidecar exists for the operator's current Kakao history, either via one successful full rebuild or via a resumable rebuild path that can complete without restarting from zero.
+- `semantic` and/or `hybrid` mode returns hits for the question “교수님이 나한테 지시하신 게 뭐지?” that are grounded in the intended professor-related chats instead of arbitrary old messages.
+- The team records an explicit decision about the default operator-facing retrieval behavior rather than leaving `query-kakao` mode selection ambiguous.
 - Restarting the service does not lose the semantic sidecar state because it is persisted under `.data/`.
 - Incremental index refresh only processes newly ingested message rows, or clearly and safely performs a rebuild when configuration changes.
-- The `/messages` endpoint output remains stable before and after the semantic work, as shown by MD5 comparison on the same reference slice.
+- The `/messages` endpoint output remains stable before and after the semantic-sidecar work, as shown by MD5 comparison on a frozen or quiescent reference slice.
 - `kakaocli-patched/README.md` alone explains installation, credentials, lifecycle, Live RAG routing, and local agent/operator caveats without sending the reader to a second repo-local `AGENTS.md`.
 - There are no remaining references that require `kakaocli-patched/AGENTS.md`.
 - The docs explain how to authenticate with Hugging Face using either `HF_TOKEN` or prior `hf auth login`.
@@ -300,3 +304,5 @@ Avoid LangChain, avoid an external vector database, and avoid introducing a seco
 This revised ExecPlan narrows the earlier generic “HF embeddings plus FAISS over arbitrary chat files” idea into a repo-native plan: external embeddings stay, but the source of truth remains the existing Kakao `messages` store, lexical retrieval remains available, and the first semantic index stays local and simple. It also adds an explicit documentation-consolidation requirement: `kakaocli-patched/AGENTS.md` will be merged into `kakaocli-patched/README.md` and then deleted, because the root repository already owns the real `AGENTS.md` rules file.
 
 Revision note, 2026-03-07: after review, this plan was tightened so semantic validation is reproducible on a fixture database, the MD5 flow captures both before and after snapshots explicitly, AGENTS-retirement checks only search the patched repo, and bookkeeping now targets concrete issue/progress files that exist in this workspace.
+
+Revision note, 2026-03-07 (handoff update): semantic feasibility is now proven with `Qwen/Qwen3-Embedding-8B`, the routed provider returns a `(1, 4096)` payload that the parser now accepts, a limited real-data rebuild has succeeded, and a recent lab-chat subset has already produced useful semantic hits. The next session should focus on full real-data coverage, operator-facing default retrieval behavior, the professor-instruction question flow, and MD5 verification on a frozen dataset.
