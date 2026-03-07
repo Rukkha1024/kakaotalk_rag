@@ -13,10 +13,11 @@ After this change, the existing Kakao Live RAG flow will still ingest messages l
 - [x] (2026-03-07 05:54Z) Confirmed that `kakaocli-patched/AGENTS.md` duplicates large parts of `kakaocli-patched/README.md`, and its remaining unique material belongs in the README instead of a second agent-rules file.
 - [x] (2026-03-07 06:03Z) Saved bilingual tracking issue documents as `docs/issue/issue003.md` and `docs/dev/issue/issue003.ko.md`.
 - [x] (2026-03-07 06:03Z) Saved this English ExecPlan and the Korean counterpart under `.agents/exceplan/`.
+- [x] (2026-03-07 06:24Z) Revised both ExecPlan files after review so the validation path is reproducible, the AGENTS retirement check only searches `kakaocli-patched/`, and bookkeeping points to concrete issue/progress paths that exist in this repo.
 - [ ] Merge the repo-local `kakaocli-patched/AGENTS.md` content into `kakaocli-patched/README.md`, remove links that require a separate repo-local AGENTS file, and delete `kakaocli-patched/AGENTS.md`.
 - [ ] Add a semantic indexing path that reads from the existing `messages` table, chunks text windows, calls an external embedding API model, and stores local embeddings metadata under `.data/`.
 - [ ] Expose `lexical`, `semantic`, and `hybrid` retrieval through the existing service and CLI without breaking current behavior.
-- [ ] Validate end to end, compare stable outputs with MD5 where the retrieval pipeline changed, update docs, record issues in `.claude/issue.md`, and record reusable workarounds in `$troubleshooting`.
+- [ ] Validate end to end, compare stable outputs with MD5 where the retrieval pipeline changed, update docs, record implementation notes in `docs/issue/issue003.md` and `docs/dev/issue/issue003.ko.md`, and capture any separate reusable workaround note under `kakaocli-patched/progress/`.
 
 ## Surprises & Discoveries
 
@@ -31,6 +32,9 @@ After this change, the existing Kakao Live RAG flow will still ingest messages l
 
 - Observation: `kakaocli-patched/README.md` already contains most operator documentation, while `kakaocli-patched/AGENTS.md` mainly duplicates it plus a few repo-local operational details.
   Evidence: the README currently links to `AGENTS.md` in several places instead of carrying those instructions directly.
+
+- Observation: the operator-facing wrapper path does not run the conda environment directly; `kakaocli-patched/bin/query-kakao` uses the repo-local `.venv` and bootstraps it through `./bin/install-kakaocli`.
+  Evidence: `kakaocli-patched/bin/query-kakao` exports `LIVE_RAG_PYTHON` from `.venv/bin/python`, and `kakaocli-patched/bin/install-kakaocli` rebuilds that environment from `requirements-live-rag.txt`.
 
 ## Decision Log
 
@@ -58,9 +62,13 @@ After this change, the existing Kakao Live RAG flow will still ingest messages l
   Rationale: Hugging Face routing and provider availability can vary by account and model deployment, so the code should accept `HF_TOKEN` or prior `hf auth login`, and optionally a provider name, without baking in one brittle provider string.
   Date/Author: 2026-03-07 / Codex
 
+- Decision: Make semantic acceptance depend on a deterministic fixture-backed validation script, then use the real Kakao database only for smoke checks and MD5 stability checks.
+  Rationale: Real Kakao history differs across machines, so a fixed live query cannot be the primary proof of semantic behavior. A temporary fixture database gives reproducible evidence, while the real database still proves the wrapper and ingestion path remain usable.
+  Date/Author: 2026-03-07 / Codex
+
 ## Outcomes & Retrospective
 
-No implementation has started yet. The intended outcome of the first execution pass is a working local Kakao retrieval service that can answer the same query through three modes: exact lexical matching, meaning-based semantic matching, and a hybrid list that combines both. The same pass must also leave the patched repo with one human-facing operations guide, `kakaocli-patched/README.md`, so a user does not need to read a second repo-local `AGENTS.md` file to understand installation, login, Live RAG routing, or operational caveats.
+No implementation has started yet. The intended outcome of the first execution pass is a working local Kakao retrieval service that can answer the same query through three modes: exact lexical matching, meaning-based semantic matching, and a hybrid list that combines both. The same pass must also leave the patched repo with one human-facing operations guide, `kakaocli-patched/README.md`, so a user does not need to read a second repo-local `AGENTS.md` file to understand installation, login, Live RAG routing, or operational caveats. The plan now also defines a deterministic fixture-based semantic proof path and concrete bookkeeping destinations so a novice can execute the work without inventing missing steps.
 
 ## Context and Orientation
 
@@ -72,6 +80,8 @@ In this plan, “semantic retrieval” means finding text by similar meaning rat
 
 The first-pass scope deliberately avoids adding generic `.txt`, `.md`, `.json`, and `.jsonl` transcript import. This repo already has a cleaner message source: the Kakao message rows in `live_rag.sqlite3`. If external transcript import is ever needed, it should be a separate issue after this change proves useful.
 
+The user-facing query wrapper is `/Users/alice/Documents/codex/query-kakao`, which delegates to `kakaocli-patched/bin/query-kakao`. That wrapper runs the patched repo’s `.venv`, not the `module` conda environment directly, and it calls `./bin/install-kakaocli --build-only` when the local runtime is missing or stale. Because of that, dependency edits in `kakaocli-patched/requirements-live-rag.txt` must be validated through both direct `conda run -n module python ...` development commands and the wrapper path that operators actually use.
+
 ## Plan of Work
 
 The first milestone is documentation consolidation before behavior changes. Update `kakaocli-patched/README.md` so it directly contains the repo-local operational material that is currently stranded in `kakaocli-patched/AGENTS.md`, including credential storage behavior, automatic lifecycle management, app state detection, AX quirks, Live RAG routing, troubleshooting, and safety rules. Remove README links that tell readers to “see AGENTS.md” for local guidance. Once the README fully carries that content, delete `kakaocli-patched/AGENTS.md`. This is not a pure cosmetic step: it removes a second misleading `AGENTS.md` file from inside a repo that already sits under a higher-level `AGENTS.md`.
@@ -80,9 +90,9 @@ The second milestone is a local semantic index builder that does not disturb cur
 
 The third milestone is a retrieval API that preserves current behavior. Extend `kakaocli-patched/tools/live_rag/app.py` so `/retrieve` accepts a `mode` field with values `lexical`, `semantic`, or `hybrid`. The existing lexical implementation remains the default safe path. Add a semantic retrieval path that embeds the incoming query, scores local chunks, expands matched chunks back to surrounding Kakao messages, and returns the same response shape already used by `query.py`. Add a hybrid path that combines the lexical list and semantic list using a simple rank-combination method that is stable across score scales. The response must still be easy to inject into an LLM prompt because that is how this repo already uses retrieval.
 
-The fourth milestone is operator usability and safety. Extend `kakaocli-patched/tools/live_rag/query.py` to accept `--mode`, `--semantic-top-k`, and optional recency controls. Add a new script `kakaocli-patched/tools/live_rag/build_semantic_index.py` that can perform a full rebuild or an incremental update from the existing message store. Update `kakaocli-patched/requirements-live-rag.txt` with the smallest useful dependency set, expected to be `huggingface_hub` and `numpy`, and avoid adding larger frameworks. Update `kakaocli-patched/README.md` so future operators understand token setup, model selection, the difference between lexical and semantic search, and the exact commands to run from the `module` conda environment.
+The fourth milestone is operator usability and safety. Extend `kakaocli-patched/tools/live_rag/query.py` to accept `--mode`, `--semantic-top-k`, and `--since-days` so recency filtering is explicit instead of implied. Add a new script `kakaocli-patched/tools/live_rag/build_semantic_index.py` that can perform a full rebuild or an incremental update from the existing message store, and make that script accept the configurable embedding model and provider. Update `kakaocli-patched/requirements-live-rag.txt` with the smallest useful dependency set, expected to be `huggingface_hub` and `numpy`, and avoid adding larger frameworks. Update `kakaocli-patched/README.md` so future operators understand token setup, model selection, the difference between lexical and semantic search, and the exact commands to run from the `module` conda environment. Because `./bin/query-kakao` uses the repo-local `.venv`, this milestone must also keep `./bin/install-kakaocli` compatible so the wrapper still works after dependency changes.
 
-The fifth milestone is validation and repo bookkeeping. Add a small validation script such as `kakaocli-patched/tools/live_rag/validate_semantic.py` that proves one document embedding call succeeds, one local index build succeeds, and one paraphrased query returns at least one result. Capture a reference export from the stable `/messages` endpoint before and after the semantic work and compare MD5 hashes so we can prove the canonical ingestion output did not change. After the README consolidation, run a repository search to confirm there are no remaining references to `kakaocli-patched/AGENTS.md`. Record implementation issues in `.claude/issue.md`, record any repeatable environment fix in `$troubleshooting`, remove temporary artifacts, and create the required Korean git commit only after the implementation has been reviewed and accepted.
+The fifth milestone is validation and repo bookkeeping. Add a small validation script such as `kakaocli-patched/tools/live_rag/validate_semantic.py` that creates an isolated temporary database, seeds a fixed Kakao-like message fixture, proves one document embedding call succeeds, proves one local index build succeeds, and proves one paraphrased query returns the expected fixture hit. Keep a separate smoke check against the real Live RAG database for lexical behavior and wrapper usability, but do not make a fixed live semantic query the primary acceptance criterion. Capture a reference export from the stable `/messages` endpoint before the semantic work and again after it, then compare MD5 hashes so we can prove the canonical ingestion output did not change. After the README consolidation, run a repository search only inside `kakaocli-patched/` to confirm there are no remaining references to `kakaocli-patched/AGENTS.md`. Record implementation notes and blockers in `docs/issue/issue003.md` and `docs/dev/issue/issue003.ko.md`; if the work uncovers a reusable environment workaround worth preserving separately, add a timestamped Markdown note under `kakaocli-patched/progress/`. Remove temporary artifacts, and create the required Korean git commit only after the implementation has been reviewed and accepted.
 
 ## Concrete Steps
 
@@ -108,11 +118,14 @@ All commands below assume the working directory is `/Users/alice/Documents/codex
     cd /Users/alice/Documents/codex/kakaocli-patched
     conda run -n module pip install -r requirements-live-rag.txt
 
-4. Verify that the current local service still works before touching retrieval.
+4. Refresh the repo-local wrapper runtime, confirm the current local service works, and capture the baseline output before touching retrieval.
 
     cd /Users/alice/Documents/codex/kakaocli-patched
+    ./bin/install-kakaocli --build-only
     conda run -n module python tools/live_rag/service_manager.py ensure
-    conda run -n module python tools/live_rag/query.py --json --query-text "업데이트"
+    curl -s http://127.0.0.1:8765/messages?limit=200 > /tmp/live_rag_messages_before.json
+    md5 /tmp/live_rag_messages_before.json
+    ./bin/query-kakao --json --query-text "업데이트"
 
     Expected success shape:
       {"query":"업데이트","hits":[...]}
@@ -127,17 +140,27 @@ All commands below assume the working directory is `/Users/alice/Documents/codex
     Expected success shape:
       {"status":"ok","embedded_chunks":500,"updated_from_log_id":12345,"model":"Qwen/Qwen3-Embedding-8B"}
 
-6. Query the service in semantic mode and hybrid mode.
+6. Run the deterministic semantic validation script against a temporary fixture database.
 
     cd /Users/alice/Documents/codex/kakaocli-patched
-    HF_TOKEN=... conda run -n module python tools/live_rag/query.py --mode semantic --json --query-text "회의 연기된 내용"
-    HF_TOKEN=... conda run -n module python tools/live_rag/query.py --mode hybrid --json --query-text "회의 연기된 내용"
+    HF_TOKEN=... conda run -n module python tools/live_rag/validate_semantic.py --use-temp-db
 
     Expected success shape:
-      {"query":"회의 연기된 내용","mode":"semantic","hits":[...]}
-      {"query":"회의 연기된 내용","mode":"hybrid","hits":[...]}
+      {"status":"ok","fixture_query":"회의 연기된 내용","expected_log_id":123,"semantic_hit_log_ids":[123,...]}
+    Expected failure shape if Hugging Face auth is missing:
+      {"status":"error","stage":"embed_documents","message":"..."}
 
-7. Capture stable output and compare MD5 before and after.
+7. Optionally smoke-test semantic mode and hybrid mode against the real local database after the fixture test passes.
+
+    cd /Users/alice/Documents/codex/kakaocli-patched
+    HF_TOKEN=... conda run -n module python tools/live_rag/query.py --mode semantic --json --query-text "<paraphrase of a known real message>"
+    HF_TOKEN=... conda run -n module python tools/live_rag/query.py --mode hybrid --json --query-text "<same paraphrase>"
+
+    Expected result:
+      The commands return JSON with `"mode":"semantic"` and `"mode":"hybrid"`.
+      Hit counts may vary with the operator's actual Kakao history, so this step is a smoke check, not the primary semantic proof.
+
+8. Capture stable output and compare MD5 before and after.
 
     cd /Users/alice/Documents/codex/kakaocli-patched
     curl -s http://127.0.0.1:8765/messages?limit=200 > /tmp/live_rag_messages_after.json
@@ -148,28 +171,31 @@ All commands below assume the working directory is `/Users/alice/Documents/codex
       The MD5 hashes match if canonical message output is unchanged.
       If they do not match, stop and explain whether the difference is ordering, formatting, or unintended ingestion drift.
 
-8. Confirm that the repo-local AGENTS file is fully retired.
+9. Confirm that the repo-local AGENTS file is fully retired.
 
     cd /Users/alice/Documents/codex
-    rg -n "kakaocli-patched/AGENTS.md|\\[AGENTS\\.md\\]\\(AGENTS\\.md\\)|See \\[AGENTS\\.md\\]" /Users/alice/Documents/codex/kakaocli-patched /Users/alice/Documents/codex
+    rg -n "kakaocli-patched/AGENTS.md|\\[AGENTS\\.md\\]\\(AGENTS\\.md\\)|See \\[AGENTS\\.md\\]" /Users/alice/Documents/codex/kakaocli-patched
 
     Expected result:
       No remaining references inside `kakaocli-patched/README.md` or other patched-repo docs that require the deleted repo-local AGENTS file.
 
-9. Run the validation script and tests.
+10. Update the concrete issue records that already exist for this work.
 
-    cd /Users/alice/Documents/codex/kakaocli-patched
-    HF_TOKEN=... conda run -n module python tools/live_rag/validate_semantic.py
+    cd /Users/alice/Documents/codex
+    sed -n '1,120p' docs/issue/issue003.md
+    sed -n '1,120p' docs/dev/issue/issue003.ko.md
 
-    Expected success shape:
-      {"status":"ok","embedding_call":true,"index_build":true,"semantic_query_hits":N}
+    Expected result:
+      Record the implementation notes, blockers, and final validation summary in those two issue files.
+      If a separate reusable workaround note is needed, create it under `kakaocli-patched/progress/YYMMDD-HHMM-*.md`.
 
 ## Validation and Acceptance
 
 Acceptance is behavioral. The change is accepted only if all of the following are true.
 
 - The existing lexical query path still returns hits for an exact keyword query through `tools/live_rag/query.py`.
-- A semantically phrased query that is not a strong exact-token match returns at least one useful hit in `semantic` mode.
+- `./bin/query-kakao --json --query-text "업데이트"` still works after the dependency and retrieval changes, proving the repo-local wrapper path remains healthy.
+- `tools/live_rag/validate_semantic.py --use-temp-db` returns the expected fixture hit for a paraphrased query in `semantic` mode.
 - `hybrid` mode returns a merged result list using the same response schema as the current retrieval path.
 - Restarting the service does not lose the semantic sidecar state because it is persisted under `.data/`.
 - Incremental index refresh only processes newly ingested message rows, or clearly and safely performs a rebuild when configuration changes.
@@ -177,15 +203,16 @@ Acceptance is behavioral. The change is accepted only if all of the following ar
 - `kakaocli-patched/README.md` alone explains installation, credentials, lifecycle, Live RAG routing, and local agent/operator caveats without sending the reader to a second repo-local `AGENTS.md`.
 - There are no remaining references that require `kakaocli-patched/AGENTS.md`.
 - The docs explain how to authenticate with Hugging Face using either `HF_TOKEN` or prior `hf auth login`.
+- The retrieval request schema and CLI expose the same explicit recency control, and that control is applied consistently in lexical, semantic, and hybrid modes.
 - The implementation can be run with `conda run -n module python ...` and does not require a new vector database or a new UI.
 
 ## Idempotence and Recovery
 
-The plan must be safe to run multiple times. Re-running `build_semantic_index.py --mode rebuild` should replace only semantic sidecar data and must never delete canonical Kakao messages. Re-running `--mode update` should skip already indexed message rows based on stored checkpoint state or stored chunk signatures. If the embedding model name, provider, chunking rules, or query template changes, the plan should force a clean semantic rebuild and leave a clear message explaining why. If Hugging Face authentication fails, the code must stop before mutating semantic state and print whether it looked for `HF_TOKEN` or cached login credentials. The README merge must also be idempotent: re-running the documentation step should not duplicate imported sections, and deleting the repo-local `AGENTS.md` should happen only after its content is safely represented in `README.md`.
+The plan must be safe to run multiple times. Re-running `build_semantic_index.py --mode rebuild` should replace only semantic sidecar data and must never delete canonical Kakao messages. Re-running `--mode update` should skip already indexed message rows based on stored checkpoint state or stored chunk signatures. If the embedding model name, provider, chunking rules, or query template changes, the plan should force a clean semantic rebuild and leave a clear message explaining why. If Hugging Face authentication fails, the code must stop before mutating semantic state and print whether it looked for `HF_TOKEN` or cached login credentials. The fixture-based `validate_semantic.py --use-temp-db` path must create and clean up its own temporary database so repeated validation does not pollute `.data/`. The README merge must also be idempotent: re-running the documentation step should not duplicate imported sections, and deleting the repo-local `AGENTS.md` should happen only after its content is safely represented in `README.md`.
 
 ## Artifacts and Notes
 
-The implementation should leave behind a small set of inspectable artifacts under `kakaocli-patched/.data/`, for example semantic metadata, semantic checkpoint state, and any local vector payload needed for search. These artifacts must be deterministic enough to debug, but temporary scratch files used only during validation should be deleted before finalizing. Keep example outputs short and JSON-first because that matches the current repo style. The human-facing document set after completion should be smaller than before: the patched repo keeps `README.md` and removes the duplicate repo-local `AGENTS.md`.
+The implementation should leave behind a small set of inspectable artifacts under `kakaocli-patched/.data/`, for example semantic metadata, semantic checkpoint state, and any local vector payload needed for search. These artifacts must be deterministic enough to debug, but temporary scratch files used only during validation should be deleted before finalizing. The fixture validation path may use a temporary database outside `.data/`, but it must clean that file up automatically. Keep example outputs short and JSON-first because that matches the current repo style. The human-facing document set after completion should be smaller than before: the patched repo keeps `README.md` and removes the duplicate repo-local `AGENTS.md`.
 
 ## Interfaces and Dependencies
 
@@ -213,8 +240,10 @@ In `kakaocli-patched/tools/live_rag/app.py`, extend `/retrieve` so it accepts:
       "query": "...",
       "mode": "lexical" | "semantic" | "hybrid",
       "limit": 8,
+      "semantic_top_k": 24,
       "chat_id": null,
       "speaker": null,
+      "since_days": null,
       "context_before": 2,
       "context_after": 2
     }
@@ -223,8 +252,18 @@ In `kakaocli-patched/tools/live_rag/query.py`, add CLI flags:
 
     --mode lexical|semantic|hybrid
     --semantic-top-k N
+    --since-days DAYS
+
+In `kakaocli-patched/tools/live_rag/build_semantic_index.py`, accept:
+
+    --mode rebuild|update
+    --limit N
     --embedding-model MODEL_ID
     --embedding-provider PROVIDER
+
+In `kakaocli-patched/tools/live_rag/validate_semantic.py`, define a validation entrypoint that can create a temporary fixture database, seed a fixed message set through `LiveRAGStore.ingest_messages`, build the semantic sidecar, and assert that a paraphrased semantic query returns the expected fixture `log_id`. A stable interface such as the following is sufficient:
+
+    conda run -n module python tools/live_rag/validate_semantic.py --use-temp-db
 
 In `kakaocli-patched/README.md`, the final content must directly include the local operational guidance currently isolated in `kakaocli-patched/AGENTS.md`, especially:
 - credential storage behavior,
@@ -246,3 +285,5 @@ Avoid LangChain, avoid an external vector database, and avoid introducing a seco
 ## Change Note
 
 This revised ExecPlan narrows the earlier generic “HF embeddings plus FAISS over arbitrary chat files” idea into a repo-native plan: external embeddings stay, but the source of truth remains the existing Kakao `messages` store, lexical retrieval remains available, and the first semantic index stays local and simple. It also adds an explicit documentation-consolidation requirement: `kakaocli-patched/AGENTS.md` will be merged into `kakaocli-patched/README.md` and then deleted, because the root repository already owns the real `AGENTS.md` rules file.
+
+Revision note, 2026-03-07: after review, this plan was tightened so semantic validation is reproducible on a fixture database, the MD5 flow captures both before and after snapshots explicitly, AGENTS-retirement checks only search the patched repo, and bookkeeping now targets concrete issue/progress files that exist in this workspace.

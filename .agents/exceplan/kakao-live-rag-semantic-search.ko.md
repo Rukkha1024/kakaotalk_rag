@@ -13,10 +13,11 @@
 - [x] (2026-03-07 05:54Z) `kakaocli-patched/AGENTS.md`가 `kakaocli-patched/README.md`와 상당 부분 중복되고, 남은 고유 내용도 별도 agent rules 파일보다 README에 속하는 성격임을 확인했다.
 - [x] (2026-03-07 06:03Z) `docs/issue/issue003.md`와 `docs/dev/issue/issue003.ko.md`에 영문/국문 추적 이슈 문서를 저장했다.
 - [x] (2026-03-07 06:03Z) `.agents/exceplan/` 아래에 이 영문/국문 ExecPlan 문서를 저장했다.
+- [x] (2026-03-07 06:24Z) 리뷰 지적사항을 반영해 두 ExecPlan을 함께 수정했고, 검증 경로를 재현 가능하게 만들고, AGENTS 퇴역 검사는 `kakaocli-patched/` 범위로 좁혔으며, 기록 대상도 현재 저장소에 실제로 존재하는 issue/progress 경로로 바꿨다.
 - [ ] `kakaocli-patched/AGENTS.md` 내용을 `kakaocli-patched/README.md`로 병합하고, 별도 repo-local AGENTS 파일을 전제하는 링크를 제거한 뒤 `kakaocli-patched/AGENTS.md`를 삭제한다.
 - [ ] 기존 `messages` 테이블을 읽어 텍스트 윈도우를 나누고 외부 임베딩 API 모델을 호출하며 `.data/` 아래에 로컬 임베딩 메타데이터를 저장하는 시맨틱 인덱싱 경로를 추가한다.
 - [ ] 기존 동작을 깨지 않으면서 현재 서비스와 CLI에 `lexical`, `semantic`, `hybrid` 검색 모드를 노출한다.
-- [ ] 끝까지 검증하고, 검색 파이프라인이 바뀐 부분은 안정적인 출력 기준으로 MD5 비교를 수행하며, 문서를 업데이트하고 `.claude/issue.md`와 `$troubleshooting`에도 결과를 남긴다.
+- [ ] 끝까지 검증하고, 검색 파이프라인이 바뀐 부분은 안정적인 출력 기준으로 MD5 비교를 수행하며, 문서를 업데이트하고, 구현 메모를 `docs/issue/issue003.md`와 `docs/dev/issue/issue003.ko.md`에 남기며, 별도 우회책이 필요하면 `kakaocli-patched/progress/` 아래에 기록한다.
 
 ## 놀라운 점과 발견 사항
 
@@ -31,6 +32,9 @@
 
 - Observation: `kakaocli-patched/README.md`가 이미 운영 문서 대부분을 담고 있고, `kakaocli-patched/AGENTS.md`는 일부 repo-local 운영 세부사항을 더한 중복 문서에 가깝다.
   Evidence: 현재 README는 그 안내를 직접 담지 않고 여러 곳에서 `AGENTS.md`를 참조한다.
+
+- Observation: 실제 운영자가 쓰는 wrapper 경로는 conda 환경을 직접 실행하지 않고, `kakaocli-patched/bin/query-kakao`가 repo-local `.venv`를 사용하며 `./bin/install-kakaocli`로 그 환경을 준비한다.
+  Evidence: `kakaocli-patched/bin/query-kakao`는 `.venv/bin/python`을 `LIVE_RAG_PYTHON`으로 내보내고, `kakaocli-patched/bin/install-kakaocli`는 `requirements-live-rag.txt` 기준으로 그 환경을 다시 만든다.
 
 ## 결정 기록
 
@@ -58,9 +62,13 @@
   Rationale: Hugging Face routing과 provider 가용성은 계정과 모델 배포 상태에 따라 달라질 수 있으므로, 코드는 `HF_TOKEN` 또는 `hf auth login`을 받아들이고 필요하면 provider 이름도 선택 가능해야 한다. 특정 provider 문자열을 하드코딩하면 취약하다.
   Date/Author: 2026-03-07 / Codex
 
+- Decision: 시맨틱 완료 기준은 결정적인 fixture 기반 검증 스크립트로 증명하고, 실제 Kakao 데이터베이스는 smoke check와 MD5 안정성 검증에만 사용한다.
+  Rationale: 실제 Kakao 대화 이력은 머신마다 다르므로 고정된 실데이터 질의를 주 완료 기준으로 두면 재현 가능하지 않다. 임시 fixture 데이터베이스는 반복 가능한 증거를 주고, 실제 데이터베이스는 wrapper와 ingestion 경로가 계속 usable함을 보여준다.
+  Date/Author: 2026-03-07 / Codex
+
 ## 결과와 회고
 
-아직 구현은 시작되지 않았다. 첫 실행 단계의 목표 결과는 같은 질의를 세 가지 방식으로 처리할 수 있는 로컬 Kakao 검색 서비스다. 즉 정확한 단어 일치 기반 lexical 검색, 의미 기반 semantic 검색, 그리고 두 결과를 결합한 hybrid 검색이 모두 동작해야 한다. 같은 단계에서 패치 저장소의 사람 대상 운영 문서도 `kakaocli-patched/README.md` 하나로 정리되어야 하며, 사용자가 설치, 로그인, Live RAG 라우팅, 운영상 주의점을 이해하기 위해 두 번째 repo-local `AGENTS.md` 파일을 읽을 필요가 없어야 한다.
+아직 구현은 시작되지 않았다. 첫 실행 단계의 목표 결과는 같은 질의를 세 가지 방식으로 처리할 수 있는 로컬 Kakao 검색 서비스다. 즉 정확한 단어 일치 기반 lexical 검색, 의미 기반 semantic 검색, 그리고 두 결과를 결합한 hybrid 검색이 모두 동작해야 한다. 같은 단계에서 패치 저장소의 사람 대상 운영 문서도 `kakaocli-patched/README.md` 하나로 정리되어야 하며, 사용자가 설치, 로그인, Live RAG 라우팅, 운영상 주의점을 이해하기 위해 두 번째 repo-local `AGENTS.md` 파일을 읽을 필요가 없어야 한다. 이제 이 계획은 결정적인 fixture 기반 시맨틱 검증 경로와 구체적인 기록 대상까지 포함하므로, 초심자도 빠진 단계를 추정하지 않고 실행할 수 있다.
 
 ## 맥락과 구조 설명
 
@@ -72,6 +80,8 @@
 
 첫 구현 범위에서는 의도적으로 일반 `.txt`, `.md`, `.json`, `.jsonl` 전사 파일 import를 넣지 않는다. 이 저장소는 이미 더 나은 메시지 원본을 가지고 있다. 바로 `live_rag.sqlite3` 안의 Kakao 메시지 행이다. 외부 전사 파일 import가 정말 필요해지면, 이 기능이 먼저 유용하다는 것이 검증된 뒤 별도 이슈로 다루는 편이 맞다.
 
+사용자 진입점인 `/Users/alice/Documents/codex/query-kakao`는 `kakaocli-patched/bin/query-kakao`를 호출한다. 이 wrapper는 `module` conda 환경을 직접 쓰지 않고 패치 저장소의 `.venv`를 실행하며, 로컬 런타임이 없거나 오래되었으면 `./bin/install-kakaocli --build-only`를 통해 다시 준비한다. 따라서 `kakaocli-patched/requirements-live-rag.txt` 의존성 변경은 직접 `conda run -n module python ...`으로 디버깅하는 경로와, 운영자가 실제로 쓰는 wrapper 경로 양쪽 모두에서 검증해야 한다.
+
 ## 작업 계획
 
 첫 번째 마일스톤은 동작 변경 전에 문서를 통합하는 것이다. `kakaocli-patched/README.md`를 업데이트해 현재 `kakaocli-patched/AGENTS.md`에 흩어져 있는 repo-local 운영 정보를 직접 포함시킨다. 여기에는 credential 저장 방식, 자동 lifecycle 관리, 앱 상태 판별, AX 특이사항, Live RAG 라우팅, troubleshooting, safety rules가 포함된다. 그리고 README 안에서 “자세한 내용은 AGENTS.md를 보라”는 링크를 제거한다. README가 이 내용을 완전히 담게 되면 `kakaocli-patched/AGENTS.md`를 삭제한다. 이 작업은 단순한 문서 미화가 아니다. 이미 상위 저장소에 진짜 `AGENTS.md`가 있는 환경에서, 오해를 부르는 두 번째 `AGENTS.md` 파일을 제거하는 구조 정리다.
@@ -80,9 +90,9 @@
 
 세 번째 마일스톤은 현재 동작을 유지하는 검색 API다. `kakaocli-patched/tools/live_rag/app.py`의 `/retrieve`가 `lexical`, `semantic`, `hybrid` 세 값을 받는 `mode` 필드를 처리하도록 확장한다. 기존 lexical 구현은 안전한 기본 경로로 유지한다. semantic 검색 경로는 들어온 질의를 임베딩하고, 로컬 chunk 점수를 계산한 뒤, 일치한 chunk를 다시 주변 Kakao 메시지 문맥으로 확장해서 현재 `query.py`가 기대하는 것과 같은 응답 형태를 반환해야 한다. hybrid 경로는 lexical 결과 목록과 semantic 결과 목록을 서로 다른 점수 체계에 덜 민감한 간단한 순위 결합 방식으로 합친다. 응답 형식은 여전히 LLM 프롬프트에 바로 주입하기 쉬워야 한다. 현재 저장소가 retrieval을 그 방식으로 사용하기 때문이다.
 
-네 번째 마일스톤은 운영성과 안전성이다. `kakaocli-patched/tools/live_rag/query.py`에 `--mode`, `--semantic-top-k`, 선택적 recency 제어 옵션을 추가한다. 기존 메시지 저장소를 기준으로 전체 재생성 또는 증분 갱신을 수행할 수 있는 새 스크립트 `kakaocli-patched/tools/live_rag/build_semantic_index.py`를 추가한다. `kakaocli-patched/requirements-live-rag.txt`에는 가장 작은 실용 의존성 집합만 넣는데, 예상 후보는 `huggingface_hub`와 `numpy`이며 더 큰 프레임워크는 피한다. 또한 `kakaocli-patched/README.md`를 업데이트해 이후 운영자가 `module` conda 환경에서 토큰 설정, 모델 선택, lexical과 semantic 검색 차이, 실행 명령을 바로 이해할 수 있게 한다.
+네 번째 마일스톤은 운영성과 안전성이다. `kakaocli-patched/tools/live_rag/query.py`에 `--mode`, `--semantic-top-k`, `--since-days`를 추가해 recency 필터가 암묵적 가정이 아니라 명시적 인터페이스가 되게 한다. 기존 메시지 저장소를 기준으로 전체 재생성 또는 증분 갱신을 수행할 수 있는 새 스크립트 `kakaocli-patched/tools/live_rag/build_semantic_index.py`를 추가하고, 이 스크립트가 설정 가능한 임베딩 모델과 provider를 받게 한다. `kakaocli-patched/requirements-live-rag.txt`에는 가장 작은 실용 의존성 집합만 넣는데, 예상 후보는 `huggingface_hub`와 `numpy`이며 더 큰 프레임워크는 피한다. 또한 `kakaocli-patched/README.md`를 업데이트해 이후 운영자가 `module` conda 환경에서 토큰 설정, 모델 선택, lexical과 semantic 검색 차이, 실행 명령을 바로 이해할 수 있게 한다. `./bin/query-kakao`는 repo-local `.venv`를 쓰므로, 이 마일스톤에서는 `./bin/install-kakaocli`와의 호환성도 함께 유지해 wrapper가 의존성 변경 뒤에도 계속 동작해야 한다.
 
-다섯 번째 마일스톤은 검증과 저장소 정리다. 예를 들어 `kakaocli-patched/tools/live_rag/validate_semantic.py` 같은 작은 검증 스크립트를 추가해, 문서 임베딩 호출 1회 성공, 로컬 인덱스 빌드 1회 성공, 우회 표현 질의 1회가 최소 1개의 결과를 반환한다는 것을 증명한다. semantic 기능 추가 전후에 안정적인 `/messages` 엔드포인트의 기준 export를 저장하고 MD5를 비교해, 정규 수집 출력은 변하지 않았음을 증명한다. README 통합이 끝난 뒤에는 저장소 전체 검색을 실행해 `kakaocli-patched/AGENTS.md`에 대한 참조가 남아 있지 않음을 확인한다. 구현 중 드러난 이슈는 `.claude/issue.md`에 남기고, 반복 가능한 환경 해결책은 `$troubleshooting`에 기록하며, 임시 산출물은 지운 뒤, 구현 검토와 승인 이후에만 요구된 한국어 git commit을 만든다.
+다섯 번째 마일스톤은 검증과 저장소 정리다. 예를 들어 `kakaocli-patched/tools/live_rag/validate_semantic.py` 같은 작은 검증 스크립트를 추가해, 임시 격리 데이터베이스를 만들고, 고정된 Kakao 스타일 fixture 메시지를 주입하고, 문서 임베딩 호출 1회 성공과 로컬 인덱스 빌드 1회 성공을 증명하고, 우회 표현 질의 1회가 기대한 fixture hit를 반환한다는 것을 증명한다. 실제 Live RAG 데이터베이스에 대한 별도 smoke check는 lexical 동작과 wrapper 사용성 확인용으로 유지하되, 고정된 실데이터 semantic 질의를 주 완료 기준으로 삼지는 않는다. semantic 기능 추가 전에 안정적인 `/messages` 엔드포인트 export를 먼저 저장하고, 변경 후 다시 저장해 MD5를 비교함으로써 정규 수집 출력은 변하지 않았음을 증명한다. README 통합이 끝난 뒤에는 `kakaocli-patched/` 범위 안에서만 검색을 실행해 `kakaocli-patched/AGENTS.md`에 대한 참조가 남아 있지 않음을 확인한다. 구현 메모와 차단 사항은 `docs/issue/issue003.md`와 `docs/dev/issue/issue003.ko.md`에 남기고, 별도 보존할 가치가 있는 반복 가능한 환경 해결책이 생기면 `kakaocli-patched/progress/` 아래에 타임스탬프 Markdown 노트를 추가한다. 임시 산출물은 지운 뒤, 구현 검토와 승인 이후에만 요구된 한국어 git commit을 만든다.
 
 ## 구체적 단계
 
@@ -108,11 +118,14 @@
     cd /Users/alice/Documents/codex/kakaocli-patched
     conda run -n module pip install -r requirements-live-rag.txt
 
-4. 검색 코드를 건드리기 전에 현재 로컬 서비스가 동작하는지 확인한다.
+4. 검색 코드를 건드리기 전에 repo-local wrapper 런타임을 새로 맞추고, 현재 로컬 서비스가 동작하는지 확인하며, 기준 출력을 먼저 저장한다.
 
     cd /Users/alice/Documents/codex/kakaocli-patched
+    ./bin/install-kakaocli --build-only
     conda run -n module python tools/live_rag/service_manager.py ensure
-    conda run -n module python tools/live_rag/query.py --json --query-text "업데이트"
+    curl -s http://127.0.0.1:8765/messages?limit=200 > /tmp/live_rag_messages_before.json
+    md5 /tmp/live_rag_messages_before.json
+    ./bin/query-kakao --json --query-text "업데이트"
 
     예상 성공 형태:
       {"query":"업데이트","hits":[...]}
@@ -127,17 +140,27 @@
     예상 성공 형태:
       {"status":"ok","embedded_chunks":500,"updated_from_log_id":12345,"model":"Qwen/Qwen3-Embedding-8B"}
 
-6. semantic 모드와 hybrid 모드로 서비스를 질의한다.
+6. 결정적인 fixture 데이터베이스를 사용해 semantic 검증 스크립트를 실행한다.
 
     cd /Users/alice/Documents/codex/kakaocli-patched
-    HF_TOKEN=... conda run -n module python tools/live_rag/query.py --mode semantic --json --query-text "회의 연기된 내용"
-    HF_TOKEN=... conda run -n module python tools/live_rag/query.py --mode hybrid --json --query-text "회의 연기된 내용"
+    HF_TOKEN=... conda run -n module python tools/live_rag/validate_semantic.py --use-temp-db
 
     예상 성공 형태:
-      {"query":"회의 연기된 내용","mode":"semantic","hits":[...]}
-      {"query":"회의 연기된 내용","mode":"hybrid","hits":[...]}
+      {"status":"ok","fixture_query":"회의 연기된 내용","expected_log_id":123,"semantic_hit_log_ids":[123,...]}
+    Hugging Face 인증이 없을 때 예상 실패 형태:
+      {"status":"error","stage":"embed_documents","message":"..."}
 
-7. 안정 출력 slice를 저장하고 전후 MD5를 비교한다.
+7. fixture 검증이 통과한 뒤, 실제 로컬 데이터베이스에 대해서는 semantic/hybrid를 smoke check로만 확인한다.
+
+    cd /Users/alice/Documents/codex/kakaocli-patched
+    HF_TOKEN=... conda run -n module python tools/live_rag/query.py --mode semantic --json --query-text "<실제 메시지의 우회 표현>"
+    HF_TOKEN=... conda run -n module python tools/live_rag/query.py --mode hybrid --json --query-text "<같은 우회 표현>"
+
+    예상 결과:
+      명령은 `"mode":"semantic"` 및 `"mode":"hybrid"`가 포함된 JSON을 반환한다.
+      hit 개수는 로컬 Kakao 이력에 따라 달라질 수 있으므로, 이 단계는 주 semantic 증명이 아니라 smoke check다.
+
+8. 안정 출력 slice를 저장하고 전후 MD5를 비교한다.
 
     cd /Users/alice/Documents/codex/kakaocli-patched
     curl -s http://127.0.0.1:8765/messages?limit=200 > /tmp/live_rag_messages_after.json
@@ -148,28 +171,31 @@
       정규 메시지 출력이 바뀌지 않았다면 MD5 해시가 일치한다.
       일치하지 않으면 정렬, 포맷, 의도치 않은 ingestion drift 중 무엇이 원인인지 설명하고 멈춘다.
 
-8. repo-local AGENTS 파일이 완전히 퇴역했는지 확인한다.
+9. repo-local AGENTS 파일이 완전히 퇴역했는지 확인한다.
 
     cd /Users/alice/Documents/codex
-    rg -n "kakaocli-patched/AGENTS.md|\\[AGENTS\\.md\\]\\(AGENTS\\.md\\)|See \\[AGENTS\\.md\\]" /Users/alice/Documents/codex/kakaocli-patched /Users/alice/Documents/codex
+    rg -n "kakaocli-patched/AGENTS.md|\\[AGENTS\\.md\\]\\(AGENTS\\.md\\)|See \\[AGENTS\\.md\\]" /Users/alice/Documents/codex/kakaocli-patched
 
     예상 결과:
       `kakaocli-patched/README.md`나 다른 패치 저장소 문서 안에 삭제된 repo-local AGENTS 파일을 요구하는 참조가 남아 있지 않다.
 
-9. 검증 스크립트와 테스트를 실행한다.
+10. 이미 존재하는 추적 이슈 문서에 구현 메모를 반영한다.
 
-    cd /Users/alice/Documents/codex/kakaocli-patched
-    HF_TOKEN=... conda run -n module python tools/live_rag/validate_semantic.py
+    cd /Users/alice/Documents/codex
+    sed -n '1,120p' docs/issue/issue003.md
+    sed -n '1,120p' docs/dev/issue/issue003.ko.md
 
-    예상 성공 형태:
-      {"status":"ok","embedding_call":true,"index_build":true,"semantic_query_hits":N}
+    예상 결과:
+      구현 메모, 차단 사항, 최종 검증 요약을 두 issue 파일에 기록한다.
+      별도 우회책 노트가 필요하면 `kakaocli-patched/progress/YYMMDD-HHMM-*.md` 형태로 추가한다.
 
 ## 검증 및 완료 기준
 
 이 변경은 동작으로 검증되어야 한다. 아래 조건이 모두 참일 때만 완료로 본다.
 
 - 기존 lexical query 경로가 `tools/live_rag/query.py`를 통해 정확한 키워드 질의에 대해 계속 hit를 반환한다.
-- 정확한 토큰 일치가 강하지 않은 우회 표현 질의가 `semantic` 모드에서 최소 하나 이상의 유의미한 hit를 반환한다.
+- `./bin/query-kakao --json --query-text "업데이트"`가 의존성 및 검색 변경 뒤에도 계속 동작해, repo-local wrapper 경로가 정상임을 보여준다.
+- `tools/live_rag/validate_semantic.py --use-temp-db`가 우회 표현 질의에 대해 기대한 fixture hit를 `semantic` 모드에서 반환한다.
 - `hybrid` 모드는 현재 검색 경로와 같은 응답 스키마로 병합 결과 목록을 반환한다.
 - 서비스가 재시작되어도 semantic sidecar 상태가 `.data/` 아래에 지속 저장되어 사라지지 않는다.
 - 증분 인덱스 갱신은 새로 수집된 메시지 행만 처리하거나, 설정이 바뀌었을 때 안전하게 전체 재빌드를 수행한다.
@@ -177,15 +203,16 @@
 - `kakaocli-patched/README.md`만 읽어도 설치, credential, lifecycle, Live RAG 라우팅, 로컬 agent/operator 주의점을 이해할 수 있으며, 두 번째 repo-local `AGENTS.md`를 보라고 하지 않는다.
 - `kakaocli-patched/AGENTS.md`를 요구하는 참조가 남아 있지 않다.
 - 문서가 `HF_TOKEN` 또는 기존 `hf auth login` 둘 중 하나로 Hugging Face 인증하는 방법을 설명한다.
+- 요청 스키마와 CLI가 같은 명시적 recency 제어를 노출하고, lexical, semantic, hybrid 모두에서 일관되게 적용된다.
 - 구현은 `conda run -n module python ...` 형태로 실행 가능하고, 새 벡터 데이터베이스나 UI를 요구하지 않는다.
 
 ## 반복 실행 안전성과 복구
 
-이 계획은 여러 번 실행해도 안전해야 한다. `build_semantic_index.py --mode rebuild`를 다시 실행해도 semantic sidecar 데이터만 교체해야 하며, 정규 Kakao 메시지는 절대 지우면 안 된다. `--mode update`를 다시 실행하면 저장된 체크포인트나 chunk 서명을 기준으로 이미 인덱싱한 메시지를 건너뛰어야 한다. 임베딩 모델명, provider, chunk 규칙, 질의 템플릿이 바뀌면 semantic 쪽만 깨끗하게 다시 빌드하고 그 이유를 명확히 출력해야 한다. Hugging Face 인증이 실패하면 semantic 상태를 바꾸기 전에 중단하고, `HF_TOKEN`을 찾았는지 아니면 캐시된 로그인 자격증명을 찾았는지를 출력해야 한다. README 병합 단계도 여러 번 실행해도 안전해야 한다. 다시 실행해도 병합된 섹션이 중복되면 안 되며, repo-local `AGENTS.md` 삭제는 그 내용이 README에 안전하게 반영된 뒤에만 일어나야 한다.
+이 계획은 여러 번 실행해도 안전해야 한다. `build_semantic_index.py --mode rebuild`를 다시 실행해도 semantic sidecar 데이터만 교체해야 하며, 정규 Kakao 메시지는 절대 지우면 안 된다. `--mode update`를 다시 실행하면 저장된 체크포인트나 chunk 서명을 기준으로 이미 인덱싱한 메시지를 건너뛰어야 한다. 임베딩 모델명, provider, chunk 규칙, 질의 템플릿이 바뀌면 semantic 쪽만 깨끗하게 다시 빌드하고 그 이유를 명확히 출력해야 한다. Hugging Face 인증이 실패하면 semantic 상태를 바꾸기 전에 중단하고, `HF_TOKEN`을 찾았는지 아니면 캐시된 로그인 자격증명을 찾았는지를 출력해야 한다. fixture 기반 `validate_semantic.py --use-temp-db` 경로는 자체 임시 데이터베이스를 만들고 정리해야 하며, 반복 실행으로 `.data/`를 오염시키면 안 된다. README 병합 단계도 여러 번 실행해도 안전해야 한다. 다시 실행해도 병합된 섹션이 중복되면 안 되며, repo-local `AGENTS.md` 삭제는 그 내용이 README에 안전하게 반영된 뒤에만 일어나야 한다.
 
 ## 산출물과 메모
 
-구현이 끝나면 `kakaocli-patched/.data/` 아래에는 semantic 메타데이터, semantic 체크포인트 상태, 검색에 필요한 로컬 벡터 페이로드처럼 검사 가능한 산출물이 남아야 한다. 다만 검증에만 쓰인 임시 scratch 파일은 최종 정리 전에 삭제해야 한다. 예시 출력은 현재 저장소 스타일에 맞게 짧고 JSON 중심으로 유지한다. 또한 사람 대상 문서 세트는 작업 전보다 단순해져야 한다. 패치 저장소에는 `README.md`만 남기고 중복된 repo-local `AGENTS.md`는 제거한다.
+구현이 끝나면 `kakaocli-patched/.data/` 아래에는 semantic 메타데이터, semantic 체크포인트 상태, 검색에 필요한 로컬 벡터 페이로드처럼 검사 가능한 산출물이 남아야 한다. 다만 검증에만 쓰인 임시 scratch 파일은 최종 정리 전에 삭제해야 한다. fixture 검증 경로가 `.data/` 밖에 임시 데이터베이스를 만들 수는 있지만, 그 파일도 자동으로 정리되어야 한다. 예시 출력은 현재 저장소 스타일에 맞게 짧고 JSON 중심으로 유지한다. 또한 사람 대상 문서 세트는 작업 전보다 단순해져야 한다. 패치 저장소에는 `README.md`만 남기고 중복된 repo-local `AGENTS.md`는 제거한다.
 
 ## 인터페이스와 의존성
 
@@ -213,8 +240,10 @@
       "query": "...",
       "mode": "lexical" | "semantic" | "hybrid",
       "limit": 8,
+      "semantic_top_k": 24,
       "chat_id": null,
       "speaker": null,
+      "since_days": null,
       "context_before": 2,
       "context_after": 2
     }
@@ -223,8 +252,18 @@
 
     --mode lexical|semantic|hybrid
     --semantic-top-k N
+    --since-days DAYS
+
+`kakaocli-patched/tools/live_rag/build_semantic_index.py`는 다음 옵션을 받아야 한다.
+
+    --mode rebuild|update
+    --limit N
     --embedding-model MODEL_ID
     --embedding-provider PROVIDER
+
+`kakaocli-patched/tools/live_rag/validate_semantic.py`는 임시 fixture 데이터베이스를 만들고, `LiveRAGStore.ingest_messages`를 통해 고정 메시지 세트를 넣고, semantic sidecar를 만든 뒤, 우회 표현 질의가 기대한 fixture `log_id`를 반환하는지 단정하는 진입점을 제공해야 한다. 다음과 같은 안정적인 인터페이스면 충분하다.
+
+    conda run -n module python tools/live_rag/validate_semantic.py --use-temp-db
 
 `kakaocli-patched/README.md`의 최종 내용은 현재 `kakaocli-patched/AGENTS.md`에만 분리되어 있는 로컬 운영 가이드를 직접 포함해야 한다. 특히 다음 항목이 포함되어야 한다.
 - credential 저장 동작
@@ -246,3 +285,5 @@ LangChain은 넣지 않고, 외부 벡터 데이터베이스도 넣지 않으며
 ## 변경 메모
 
 이 개정된 ExecPlan은 앞서 논의된 “임의 채팅 파일 + HF 임베딩 + FAISS” 아이디어를 저장소 친화적으로 좁힌 버전이다. 외부 임베딩 개념은 유지하되, 원본 데이터는 기존 Kakao `messages` 저장소를 그대로 사용하고, lexical 검색은 유지하며, 첫 semantic 인덱스는 로컬에 단순하게 보관하는 방향으로 바꿨다. 여기에 문서 통합 요구사항도 명시적으로 추가했다. 루트 저장소가 실제 `AGENTS.md` 규칙 파일을 이미 가지고 있으므로, `kakaocli-patched/AGENTS.md`는 `kakaocli-patched/README.md`로 병합한 뒤 삭제한다.
+
+변경 메모, 2026-03-07: 리뷰 이후 이 계획은 fixture 데이터베이스 기반의 재현 가능한 semantic 검증, 명시적인 before/after MD5 캡처, `kakaocli-patched/` 범위로 한정한 AGENTS 퇴역 검사, 그리고 현재 워크스페이스에 실제로 존재하는 issue/progress 경로를 가리키는 기록 절차를 추가하도록 보강되었다.
