@@ -1,0 +1,6 @@
+interface:
+  display_name: "kakaocli"
+  short_description: "Install, verify, and safely use the repo-local patched kakaocli workflow on this Mac."
+  default_prompt: "Use $kakaocli to install or verify the repo-local patched kakaocli workflow and handle KakaoTalk tasks safely on this Mac."
+policy:
+  allow_implicit_invocation: true

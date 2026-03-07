@@ -1,6 +1,6 @@
 ---
-name: kakaocli-safe-ops
-description: Install, verify, and safely use kakaocli on this macOS machine for KakaoTalk tasks. Use when the task involves KakaoTalk, kakaocli, local chat search, login or permissions, or preparing a safe reply flow. Do not use for unrelated work.
+name: kakaocli
+description: Install, verify, and safely use the repo-local patched kakaocli workflow on this macOS machine for KakaoTalk tasks. Use when the task involves KakaoTalk, kakaocli, local chat search, login or permissions, or preparing a safe reply flow. Do not use for unrelated work.
 ---
 
 # Purpose

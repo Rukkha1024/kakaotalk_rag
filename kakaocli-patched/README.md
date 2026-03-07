@@ -246,14 +246,14 @@ Use `kakaocli` to read and send KakaoTalk messages:
 - `kakaocli send --me _ "message"` — send to self-chat (safe for testing)
 ```
 
-Or copy the skill file directly:
+For this workspace, use the canonical repo-level skill directly:
 
 ```bash
-# Copy the skill definition to your project
-cp skills/kakaocli/SKILL.md /path/to/your/project/.claude/skills/
+# Canonical skill location in the outer repo
+open ../.agents/skills/kakaocli/SKILL.md
 ```
 
-Claude Code can then read your KakaoTalk messages, search conversations, and send messages on your behalf.
+Claude Code in this workspace uses that single `.agents/skills/kakaocli` definition.
 
 This is a secondary integration path for editors that do not use this repo's `AGENTS.md` routing directly.
 
@@ -290,7 +290,7 @@ Each new message is delivered as a JSON object:
 
 ### OpenClaw
 
-A kakaocli [skill definition](skills/kakaocli/SKILL.md) is included for use with [OpenClaw](https://github.com/nichochar/open-claw) or similar skill registries.
+This repo no longer carries a duplicated `skills/kakaocli/` mirror. If you need an OpenClaw-style registry entry for this workspace, point it at the canonical repo-level skill: [../.agents/skills/kakaocli/SKILL.md](../.agents/skills/kakaocli/SKILL.md).
 
 See [AGENTS.md](AGENTS.md) for detailed integration instructions including credential setup, lifecycle management, local Codex routing, and error handling.
 
