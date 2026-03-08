@@ -1,4 +1,0 @@
-interface:
-  display_name: "Progress MD Workflow"
-  short_description: "Create timestamped progress markdown notes."
-  default_prompt: "Use $progress-md-workflow to create a timestamped progress note with problem, work, validation, and next improvements."

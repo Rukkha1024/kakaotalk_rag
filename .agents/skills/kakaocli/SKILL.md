@@ -9,13 +9,11 @@ Use `kakaocli` to handle KakaoTalk tasks on this Mac. This skill is for macOS on
 
 ## Local defaults on this Mac
 
-- From the repo root, default installer: `./install-kakaocli`
-- From the repo root, default raw CLI path: `./kakaocli-local`
-- From the repo root, default evidence query path: `./query-kakao --json --query-text "..."`
-- The repo-root wrappers delegate to external `PATH` commands: `kakaocli` and `query-kakao`
+- Default raw CLI path: `kakaocli`
+- Default evidence query path: `query-kakao --json --query-text "..."`
 - For KakaoTalk information requests, summaries, or evidence-backed answers, use the Live RAG query path first.
 - For installation, permissions, login, `status`, `auth`, and low-level diagnostics, use the raw CLI path.
-- This repo no longer vendors the public product source. If the wrappers report a missing command, install the external toolkit first.
+- This repo no longer vendors the public product source. If these commands are missing, install the external toolkit first.
 
 ## When to use
 
@@ -36,12 +34,11 @@ Do not use this skill for unrelated work.
 
 ## Install
 
-1. From the repo root, run `./install-kakaocli`.
-2. The wrapper checks whether external `PATH` commands `kakaocli` and `query-kakao` are available and reports what is missing.
-3. If `kakaocli` is missing, prefer:
+1. Check whether `kakaocli` and `query-kakao` resolve on `PATH`.
+2. If `kakaocli` is missing, prefer:
    `brew install silver-flight-group/tap/kakaocli`
-4. If `query-kakao` is missing, explain that the separate public toolkit must also be installed or its `bin` directory must be added to `PATH`.
-5. Do not claim success until `./kakaocli-local auth` succeeds and `./query-kakao --json --query-text "..."` resolves as a command path.
+3. If `query-kakao` is missing, explain that the separate public toolkit must also be installed or its `bin` directory must be added to `PATH`.
+4. Do not claim success until `kakaocli auth` succeeds and `query-kakao --json --query-text "..."` resolves as a command path.
 
 ## Permissions
 
@@ -56,14 +53,13 @@ Guide the user to:
 ## Verification
 
 Run, in order:
-1. `./install-kakaocli`
-2. `./kakaocli-local auth`
-3. `./kakaocli-local login --status`
+1. `kakaocli auth`
+2. `kakaocli login --status`
 4. For information requests or summaries, prefer:
-   `./query-kakao --json --query-text "..."`
+   `query-kakao --json --query-text "..."`
 
 Interpretation:
-- If `./install-kakaocli` reports missing commands, stop and surface the exact install step instead of guessing alternate repo-relative paths.
+- If either command is missing, stop and surface the exact install step instead of guessing alternate repo-relative paths.
 - If `auth` succeeds, read commands are ready even without a visible KakaoTalk window.
 - If `login --status` shows missing credentials, explain that UI-driven commands may need `kakaocli login` and ask before storing credentials.
 - If `status` or `login --status` time out while probing KakaoTalk state, report that explicitly and continue from the `auth` result instead of retrying forever.
@@ -72,20 +68,20 @@ Interpretation:
 ## Common read commands
 
 Prefer these first:
-- `./kakaocli-local chats --json`
-- `./kakaocli-local messages --chat "name" --since 1d --json`
-- `./kakaocli-local search "keyword" --json`
-- `./kakaocli-local query "SELECT COUNT(*) FROM NTChatMessage" --json`
+- `kakaocli chats --json`
+- `kakaocli messages --chat "name" --since 1d --json`
+- `kakaocli search "keyword" --json`
+- `kakaocli query "SELECT COUNT(*) FROM NTChatMessage" --json`
 
 ## Real-time and UI commands
 
 Use only when the user explicitly requests them:
-- `./kakaocli-local sync --follow`
-- `./kakaocli-local sync --follow --webhook http://localhost:8080/kakao`
-- `./kakaocli-local harvest`
-- `./kakaocli-local harvest --scroll`
-- `./kakaocli-local send ...`
-- `./kakaocli-local send --dry-run ...`
+- `kakaocli sync --follow`
+- `kakaocli sync --follow --webhook http://localhost:8080/kakao`
+- `kakaocli harvest`
+- `kakaocli harvest --scroll`
+- `kakaocli send ...`
+- `kakaocli send --dry-run ...`
 
 ## Known limitations
 
