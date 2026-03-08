@@ -1,36 +1,33 @@
-# Codex Kakao Live RAG Wrapper
+# Codex Kakao Operator Repo
 
-이 저장소는 `patched kakaocli + 저장형 semantic sidecar + launchd-backed Live RAG`를 묶어, Codex CLI가 카카오톡 질문에 로컬 근거 기반으로 답하도록 운영하는 래퍼 저장소입니다.
+이 저장소는 공개용 `kakaocli` 제품 저장소가 아니라, Codex가 카카오톡 질문에
+외부 `kakaocli` 도구를 사용해 답하도록 돕는 운영자용 agent 작업공간입니다.
 
-This repo is an operator-facing wrapper around the patched `kakaocli` workflow so Codex can answer KakaoTalk questions from local evidence instead of ad-hoc shell access.
+## 이 저장소의 역할
 
-## What This Repo Does
+- `AGENTS.md`와 `.agents/skills/`로 Codex의 Kakao 작업 규칙을 정의합니다.
+- 루트 래퍼 `./install-kakaocli`, `./kakaocli-local`, `./query-kakao`로 외부 `PATH`
+  명령을 점검하거나 위임합니다.
+- 운영 메모, 이슈 문서, progress 기록을 이 저장소에 유지합니다.
 
-- 일상 질의 경로(day-to-day operator path)는 루트 래퍼 명령으로 고정합니다.
-- 저수준 `kakaocli` 명령 카탈로그와 상세 설명은 [`kakaocli-patched/README.md`](kakaocli-patched/README.md)에서 확인합니다.
-- 저장형 RAG는 `kakaocli-patched/.data/live_rag.sqlite3`에 유지됩니다.
-- Live RAG는 `launchd`로 관리되어 `query-kakao` 호출 시 필요한 백그라운드 서비스가 자동 보장됩니다.
+공개용 제품 코드는 이 저장소에 내장하지 않습니다. 현재 Mac에서 분리한 공개용
+레포는 `/Users/alice/Documents/kakaocli-public`에 따로 있습니다.
 
 ## Quick Start
 
-### 1. Install
+### 1. 외부 toolkit 확인
 
-루트에서 아래 래퍼를 사용합니다.
+먼저 아래 래퍼를 실행합니다.
 
 ```bash
 ./install-kakaocli
 ```
 
-이 명령은 내부적으로 `kakaocli-patched`의 로컬 빌드와 `.venv` 런타임을 준비합니다.
+이 래퍼는 제품을 빌드하지 않습니다. 대신 외부 `PATH` 명령 `kakaocli`와
+`query-kakao`가 준비되었는지 확인하고, 빠진 명령이 있으면 설치 방향을
+안내합니다.
 
-### 2. Permissions and Status
-
-macOS에서 최소 아래 확인이 필요합니다.
-
-- Full Disk Access: 카카오톡 DB 읽기용
-- Accessibility: UI 자동화가 필요한 명령용
-
-상태 확인은 루트 래퍼로 시작합니다.
+### 2. 기본 점검
 
 ```bash
 ./kakaocli-local status
@@ -38,104 +35,49 @@ macOS에서 최소 아래 확인이 필요합니다.
 ./kakaocli-local login --status
 ```
 
-## Evidence-Backed Queries
+권한이 빠져 있으면 macOS에서 아래를 확인합니다.
 
-Codex가 카카오톡 관련 질문에 답할 때 기본 진입점(default entrypoint)은 `./query-kakao`입니다.
+- Full Disk Access
+- Accessibility
+
+### 3. 근거 기반 질의
+
+카카오톡 정보 조회나 요약은 아래 경로를 기본으로 사용합니다.
 
 ```bash
 ./query-kakao --json --query-text "박다훈 업데이트"
-./query-kakao --json --mode lexical --query-text "업데이트"
-./query-kakao --json --mode semantic --query-text "회의가 연기된 내용"
 ./query-kakao --json --mode hybrid --query-text "박다훈이 미룬 일정"
 ```
 
-운영 규칙은 다음과 같습니다.
+이 래퍼는 외부 `query-kakao` 명령으로 위임합니다. 명령이 없으면 먼저
+`./install-kakaocli`를 다시 실행해 누락된 설치 단계를 확인합니다.
 
-- 기본 질의 모드(default retrieval mode)는 `hybrid`입니다.
-- semantic sidecar가 아직 없거나 사용할 수 없으면 lexical 결과로 fallback합니다.
-- JSON 응답에는 필요 시 `requested_mode`와 `fallback_reason`가 포함되어 downgrade가 드러납니다.
-- `./query-kakao`는 내부적으로 Live RAG 서비스 상태를 확인하고 필요하면 자동 기동합니다.
+## 외부 의존 관계
 
-## Stored RAG and Semantic Sidecar
+이 저장소는 외부 설치를 전제로 합니다.
 
-이 저장소의 canonical store는 다음 파일입니다.
+- 핵심 CLI: `kakaocli`
+- 근거 기반 질의 진입점: `query-kakao`
 
-```text
-kakaocli-patched/.data/live_rag.sqlite3
-```
-
-구성은 다음처럼 나뉩니다.
-
-- canonical messages: 정규화된 카카오 메시지 저장
-- semantic sidecar: 같은 DB 안의 `semantic_chunks`와 runtime state
-- retrieval service: canonical store와 semantic sidecar를 함께 사용
-
-semantic build/update는 유지보수 경로(maintainer path)로만 실행합니다.
+`kakaocli`가 없다면 보통 아래부터 확인합니다.
 
 ```bash
-conda run -n module python kakaocli-patched/tools/live_rag/build_semantic_index.py --mode update
-
-HF_TOKEN=hf_xxx conda run -n module python kakaocli-patched/tools/live_rag/build_semantic_index.py --mode rebuild --batch-size 20 --progress
-
-HF_TOKEN=hf_xxx conda run -n module python kakaocli-patched/tools/live_rag/validate_semantic.py --use-temp-db
+brew install silver-flight-group/tap/kakaocli
 ```
 
-운영상 알아둘 점:
+그 뒤에도 `query-kakao`가 없다면, 분리된 공개용 toolkit의 `bin` 경로가 `PATH`에
+노출되어 있는지 확인해야 합니다.
 
-- semantic 검색은 Hugging Face 토큰이 있어야 합니다.
-- semantic 후보는 현재 규칙상 `member_count <= 30` 채팅만 포함합니다.
-- normal text message만 semantic 후보가 됩니다.
-- embedding 규칙이나 semantic config signature가 바뀌면 `--mode rebuild`를 사용해야 합니다.
-- canonical `messages`는 유지되고 semantic 데이터만 sidecar/runtime state로 관리됩니다.
+## 운영 규칙
 
-## Live RAG Operations
+- KakaoTalk 정보 요청은 먼저 `./query-kakao --json --query-text "<request>"`로 시작합니다.
+- 설치/권한/login/status/auth/저수준 진단은 `./kakaocli-local`로 처리합니다.
+- 래퍼가 missing command를 보고하면, 임의의 repo-relative 경로를 추정하지 말고
+  정확한 설치 누락 상태를 먼저 사용자에게 알려야 합니다.
+- 다른 사람에게 메시지를 보내는 명령은 기존처럼 명시적 사용자 확인이 있어야 합니다.
 
-Live RAG는 webhook app + sync follower를 `launchd`로 유지하는 구조입니다.
+## 참고
 
-- LaunchAgent path: `~/Library/LaunchAgents/com.codex.kakaocli-live-rag.plist`
-- service label: `com.codex.kakaocli-live-rag`
-- operator path에서는 `/health`를 직접 두드리기보다 상태 명령을 사용합니다
-
-상태 점검:
-
-```bash
-conda run -n module python kakaocli-patched/tools/live_rag/service_manager.py status
-```
-
-필요 시 유지보수자가 사용할 수 있는 관리 명령:
-
-```bash
-conda run -n module python kakaocli-patched/tools/live_rag/service_manager.py ensure
-conda run -n module python kakaocli-patched/tools/live_rag/service_manager.py start
-conda run -n module python kakaocli-patched/tools/live_rag/service_manager.py stop
-```
-
-현재 repo 로직 기준으로 `query-kakao`는 이 서비스가 내려가 있어도 자동 복구 경로를 통해 질의를 계속 시도합니다.
-
-## Operator Path vs Maintainer Path
-
-일반 운영(day-to-day operator):
-
-- `./install-kakaocli`
-- `./kakaocli-local status`
-- `./kakaocli-local auth`
-- `./query-kakao --json --query-text "..."`
-
-유지보수(maintainer):
-
-- `conda run -n module python kakaocli-patched/tools/live_rag/build_semantic_index.py ...`
-- `conda run -n module python kakaocli-patched/tools/live_rag/validate_semantic.py --use-temp-db`
-- `conda run -n module python kakaocli-patched/tools/live_rag/service_manager.py status`
-
-주의:
-
-- 이 repo의 기본 경로는 upstream/Homebrew `kakaocli`가 아닙니다.
-- 루트 래퍼는 `kakaocli-patched` 내부 로컬 빌드와 런타임을 전제로 합니다.
-- KakaoTalk 정보 조회나 요약은 먼저 `./query-kakao --json --query-text "<request>"`로 시작하는 것이 기준입니다.
-
-## Low-Level Reference
-
-저수준 명령 설명, raw `kakaocli` 기능, 설치 내부 동작이 더 필요하면 아래 문서를 봅니다.
-
-- [`kakaocli-patched/README.md`](kakaocli-patched/README.md)
-
+- 운영자용 지침: `AGENTS.md`
+- Kakao 전용 스킬: `.agents/skills/kakaocli/SKILL.md`
+- 분리된 공개용 toolkit 로컬 위치: `/Users/alice/Documents/kakaocli-public`

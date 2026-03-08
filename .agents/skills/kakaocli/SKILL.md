@@ -1,6 +1,6 @@
 ---
 name: kakaocli
-description: Install, verify, and safely use the repo-local patched kakaocli workflow on this macOS machine for KakaoTalk tasks. Use when the task involves KakaoTalk, kakaocli, local chat search, login or permissions, or preparing a safe reply flow. Do not use for unrelated work.
+description: Install, verify, and safely use the external kakaocli toolkit on this macOS machine for KakaoTalk tasks from the operator repo. Use when the task involves KakaoTalk, kakaocli, local chat search, login or permissions, or preparing a safe reply flow. Do not use for unrelated work.
 ---
 
 # Purpose
@@ -12,10 +12,10 @@ Use `kakaocli` to handle KakaoTalk tasks on this Mac. This skill is for macOS on
 - From the repo root, default installer: `./install-kakaocli`
 - From the repo root, default raw CLI path: `./kakaocli-local`
 - From the repo root, default evidence query path: `./query-kakao --json --query-text "..."`
-- If you are already inside `kakaocli-patched/`, use `./bin/install-kakaocli`, `./bin/kakaocli-local`, and `./bin/query-kakao`
+- The repo-root wrappers delegate to external `PATH` commands: `kakaocli` and `query-kakao`
 - For KakaoTalk information requests, summaries, or evidence-backed answers, use the Live RAG query path first.
 - For installation, permissions, login, `status`, `auth`, and low-level diagnostics, use the raw CLI path.
-- Do not treat the Homebrew or `PATH` `kakaocli` as the default on this Mac. It may still point to the upstream build without the local `userId` cache fallback.
+- This repo no longer vendors the public product source. If the wrappers report a missing command, install the external toolkit first.
 
 ## When to use
 
@@ -36,12 +36,12 @@ Do not use this skill for unrelated work.
 
 ## Install
 
-1. From the repo root, run `./install-kakaocli`. If you are already in `kakaocli-patched/`, run `./bin/install-kakaocli`.
-2. The installer resolves repo-relative paths, ensures Homebrew `sqlcipher`, prepares the repo-local `.venv` for Live RAG helpers, and builds the patched release binary when needed.
-3. Only if the patched repo is unavailable, fall back to the upstream install path:
+1. From the repo root, run `./install-kakaocli`.
+2. The wrapper checks whether external `PATH` commands `kakaocli` and `query-kakao` are available and reports what is missing.
+3. If `kakaocli` is missing, prefer:
    `brew install silver-flight-group/tap/kakaocli`
-4. Explain that the Homebrew or upstream binary may still fail `auth` on this Mac because upstream `userId` discovery does not include the local cache fallback.
-5. Do not claim success until `./kakaocli-local auth` or `./bin/kakaocli-local auth` succeeds.
+4. If `query-kakao` is missing, explain that the separate public toolkit must also be installed or its `bin` directory must be added to `PATH`.
+5. Do not claim success until `./kakaocli-local auth` succeeds and `./query-kakao --json --query-text "..."` resolves as a command path.
 
 ## Permissions
 
@@ -63,6 +63,7 @@ Run, in order:
    `./query-kakao --json --query-text "..."`
 
 Interpretation:
+- If `./install-kakaocli` reports missing commands, stop and surface the exact install step instead of guessing alternate repo-relative paths.
 - If `auth` succeeds, read commands are ready even without a visible KakaoTalk window.
 - If `login --status` shows missing credentials, explain that UI-driven commands may need `kakaocli login` and ask before storing credentials.
 - If `status` or `login --status` time out while probing KakaoTalk state, report that explicitly and continue from the `auth` result instead of retrying forever.
@@ -93,7 +94,7 @@ Use only when the user explicitly requests them:
 - Group chat names may appear as `(unknown)` until `harvest` captures UI names.
 - Text is the most reliable supported message type.
 - KakaoTalk allows one Mac login per account.
-- The `PATH` `kakaocli` may still be the upstream Homebrew build and should not be assumed to match the patched local repo.
+- This operator repo does not embed the public toolkit, so missing `PATH` commands must be fixed before Kakao tasks can proceed.
 
 ## Reporting
 

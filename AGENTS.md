@@ -19,8 +19,10 @@
 - Use `$readme-update-only` skill when the user asks to revise, refresh, reorganize, or maintain README content, or when the user explicitly types `$readme-update-only`. Rather than explaining the code itself, write for those who may not know how to code. Focus on execution commands and the overall workflow of the project.
 - Python Files: Write a docstring of 7 lines or fewer explaining the core function and logic. Keep it concise so that anyone opening the file can immediately understand its purpose.
 - Use $kakaocli for KakaoTalk tasks on this Mac. For non-Kakao tasks, do not use kakaocli or its skill. Never send messages to other people without my explicit confirmation.
+- This repo is the operator-facing agent workspace. Do not depend on embedded public `kakaocli` source here; use the repo-root wrappers, which delegate to external `PATH` commands.
 - For KakaoTalk information requests, first run `./query-kakao --json --query-text "<request>"` from the repo root.
-- The Live RAG query entrypoint must ensure the launchd-backed webhook server and sync follower are running before answering.
+- If `./query-kakao` or `./kakaocli-local` reports missing external commands, run `./install-kakaocli` and report the exact missing command before continuing.
+- The external Live RAG query entrypoint must ensure the launchd-backed webhook server and sync follower are running before answering.
 - Ground KakaoTalk answers in retrieved chat evidence whenever the query returns hits.
 - For KakaoTalk answers, lead with the dominant topic or repeated entity when the evidence clearly points to one, then support it with message evidence.
 - Read `.agents/embedding-rules.md` before semantic embedding, indexing, build, rebuild, or validation work.
