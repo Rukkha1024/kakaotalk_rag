@@ -18,13 +18,9 @@
 - Use `$progress-md-workflow` when the user asks to create or update a timestamped progress markdown note or work log.
 - Use `$readme-update-only` skill when the user asks to revise, refresh, reorganize, or maintain README content, or when the user explicitly types `$readme-update-only`. Rather than explaining the code itself, write for those who may not know how to code. Focus on execution commands and the overall workflow of the project.
 - Python Files: Write a docstring of 7 lines or fewer explaining the core function and logic. Keep it concise so that anyone opening the file can immediately understand its purpose.
-- Use $kakaocli for KakaoTalk tasks on this Mac. For non-Kakao tasks, do not use kakaocli or its skill. Never send messages to other people without my explicit confirmation.
-- This repo is the operator-facing agent workspace. Do not depend on embedded public `kakaocli` source here.
-- For KakaoTalk information requests, first run `query-kakao --json --query-text "<request>"`.
-- If `query-kakao` or `kakaocli` is missing, report the exact missing command and tell the user to install the external toolkit before continuing.
-- The external Live RAG query entrypoint must ensure the launchd-backed webhook server and sync follower are running before answering.
-- Ground KakaoTalk answers in retrieved chat evidence whenever the query returns hits.
-- For KakaoTalk answers, lead with the dominant topic or repeated entity when the evidence clearly points to one, then support it with message evidence.
+- For every user prompt, first check local RAG context with `query-kakao --json --query-text "<request>"`.
+- If relevant material is found, incorporate it into the answer naturally; if it is unrelated, do not force it into the response.
+- Use `$kakaocli` for this workflow, and never send messages to other people without my explicit confirmation.
 - Read `.agents/embedding-rules.md` before semantic embedding, indexing, build, rebuild, or validation work.
 - Follow `.agents/embedding-rules.md` as the repository embedding rule unless the user changes it.
 
